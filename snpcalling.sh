@@ -653,7 +653,7 @@ if [[ "$RUN_S5" == "y" ]]; then
         N_SITES_AFTER=$(wc -l < "$STAGE5/LDpruned_snp.sites")
         echo "-------------------------------------------------------"
         echo "[Stage 5 完成回報]"
-        echo "LD Pruning 前的初始位點數: $N_SITES_BEFORE"
+        echo "LD Pruning 前的初始位點數: $N_SITES"
         echo "LD Pruning 後保留的位點數: $N_SITES_AFTER"
         echo "位點索引檔路徑: $STAGE5/LDpruned_snp.sites"
         echo "-------------------------------------------------------"
