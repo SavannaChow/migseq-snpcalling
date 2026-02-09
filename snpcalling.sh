@@ -1,0 +1,503 @@
+#!/bin/bash
+
+# ==============================================================================
+# MIG Analysis Full Pipeline - Smart Hybrid Mode (v8.12)
+# 核心原則：絕對禁止更動黃金版本的 R code、統計參數、選單結構與文字顯示。
+# 修改內容：僅將檔案輸出導向至 00_Logs ~ 05_SNP_Calling 分類資料夾。
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# 0. 輔助函式定義
+# ------------------------------------------------------------------------------
+ask_to_run() {
+    local step_name=$1
+    local check_target=$2
+    local skip_var_name=$3
+    local exists=false
+    if [ -f "$check_target" ]; then exists=true; elif [ -d "$check_target" ] && [ "$(ls -A $check_target 2>/dev/null)" ]; then exists=true; fi
+    if [ "$exists" = true ]; then
+        echo "-------------------------------------------------------"
+        echo "[偵測到已存在的分析結果]: $step_name"
+        read -p "是否跳過此步驟並使用現有結果？ (y:跳過 / n:重新分析): " choice < /dev/tty
+        [[ "$choice" == "y" || "$choice" == "Y" ]] && eval "$skip_var_name=true" || eval "$skip_var_name=false"
+    else
+        eval "$skip_var_name=false"
+    fi
+}
+
+# ------------------------------------------------------------------------------
+# 1. 優先參數輸入與流程選擇
+# ------------------------------------------------------------------------------
+# 1.1 專案基本資訊
+read -p "請輸入專案名稱(分析產生的檔案都將以專案名稱為開頭,不要有特殊字元) " PROJECT_NAME
+read -e -p "請輸入原始序列 (raw data) 資料夾路徑: " RAW_PATH
+[ ! -d "$RAW_PATH" ] && { echo "錯誤：找不到路徑 $RAW_PATH"; exit 1; }
+RAW_PATH=$(realpath "$RAW_PATH")
+
+# 1.2 參考基因組配置
+MAPFILE=()
+while IFS= read -r varname; do [[ $varname == Ref* ]] && MAPFILE+=("$varname"); done < <(env | cut -d= -f1 | grep '^Ref')
+echo "--- 可用的參考基因組 ---"
+for i in "${!MAPFILE[@]}"; do echo "$((i+1))) \$${MAPFILE[$i]} (${!MAPFILE[$i]})"; done
+echo "$(( ${#MAPFILE[@]} + 1 ))) 手動輸入絕對路徑"
+read -p "請選擇參考基因組 (1-$(( ${#MAPFILE[@]} + 1 ))): " REF_CHOICE
+if [ "$REF_CHOICE" -le "${#MAPFILE[@]}" ]; then
+    REF_GENOME="${!MAPFILE[$((REF_CHOICE-1))]}"
+elif [ "$REF_CHOICE" -eq "$(( ${#MAPFILE[@]} + 1 ))" ]; then
+    read -e -p "請輸入絕對路徑: " REF_GENOME
+else
+    exit 1
+fi
+[ ! -f "${REF_GENOME}.bwt" ] && { echo "建立 BWA index..."; bwa index "$REF_GENOME"; }
+[ ! -f "${REF_GENOME}.fai" ] && { echo "建立 Samtools index..."; samtools faidx "$REF_GENOME"; }
+
+# 1.3 模式選擇
+echo "-------------------------------------------------------"
+echo "請選擇分析運行模式："
+echo "1) 自動模式 (預先設定篩選策略，遇到決策點不中斷)"
+echo "2) 互動模式 (各階段結束後，手動決定是否移除樣本)"
+read -p "請輸入選項 (1 或 2): " RUN_MODE
+
+if [ "$RUN_MODE" == "1" ]; then
+    echo "[模式選擇：自動模式]"
+    read -p "  > 偵測到 PCA Outlier 時處理方式 (1:移除, 2:保留): " AUTO_PCA_CHOICE
+    read -p "  > 偵測到 Clone 樣本時處理方式 (1:移除, 2:保留): " AUTO_CLONE_CHOICE
+    echo "預設 PCA 決策: $AUTO_PCA_CHOICE"
+    echo "預設 Clone 決策: $AUTO_CLONE_CHOICE"
+else
+    echo "[模式選擇：互動模式]"
+fi
+
+# 1.4 階段選擇 (模組化重構版本)
+echo "-------------------------------------------------------"
+echo "分析流程選擇 (Stage Selector):"
+echo "1) 執行完整流程 (Stage 1-6)"
+echo "2) 僅執行上游處理 (1. Trimming & 2. Alignment)"
+echo "3) 執行過濾分析 (3. PCA Outlier & 4. Clone Filtering)"
+echo "4) 僅執行 LD Pruning (5. 產生非連鎖不平衡位點表)"
+echo "5) 執行最終 SNP Calling (6. 基於現有位點表進行 call set)"
+echo "6) 自定義流程"
+read -p "請選擇運行範圍: " RUN_CHOICE
+
+case "$RUN_CHOICE" in
+    1) RUN_S1=y; RUN_S2=y; RUN_S3=y; RUN_S4=y; RUN_S5=y; RUN_S6=y ;;
+    2) RUN_S1=y; RUN_S2=y; RUN_S3=n; RUN_S4=n; RUN_S5=n; RUN_S6=n ;;
+    3) RUN_S1=n; RUN_S2=n; RUN_S3=y; RUN_S4=y; RUN_S5=n; RUN_S6=n ;;
+    4) RUN_S1=n; RUN_S2=n; RUN_S3=n; RUN_S4=n; RUN_S5=y; RUN_S6=n ;;
+    5) RUN_S1=n; RUN_S2=n; RUN_S3=n; RUN_S4=n; RUN_S5=n; RUN_S6=y ;;
+    *) 
+       read -p "執行 Stage 1 Trimming? (y/n): " RUN_S1
+       read -p "執行 Stage 2 Alignment? (y/n): " RUN_S2
+       read -p "執行 Stage 3 PCA Outlier Filtering? (y/n): " RUN_S3
+       read -p "執行 Stage 4 Clone Filtering? (y/n): " RUN_S4
+       read -p "執行 Stage 5 LD Pruning (Generate Site Map)? (y/n): " RUN_S5
+       read -p "執行 Stage 6 Final SNP Calling (Apply Map)? (y/n): " RUN_S6
+       ;;
+esac
+# ------------------------------------------------------------------------------
+# 2. 目錄與日誌初始化
+# ------------------------------------------------------------------------------
+CURRENT_TIME=$(date +"%Y%m%d_%H%M%S")
+LOG_DIR="00_Logs"; STAGE1="01_Trimming"; STAGE2="02_Alignment"; STAGE3="03_PCA_Analysis"
+STAGE4="04_Clone_Detection"; STAGE5="05_SNP_Calling"
+mkdir -p "$LOG_DIR" "$STAGE1/trim" "$STAGE1/fastp_report" "$STAGE2/bam" "$STAGE2/mapped_bam" "$STAGE2/mapping_results" "$STAGE3" "$STAGE4" "$STAGE5"
+
+LOG_FILE="$LOG_DIR/${PROJECT_NAME}_${CURRENT_TIME}.log"
+exec > >(tee -i "$LOG_FILE") 2>&1
+
+echo "======================================================="
+echo "分析啟動時間: $(date)"
+echo "專案名稱: $PROJECT_NAME"
+echo "======================================================="
+
+THREADS=$(nproc 2>/dev/null || sysctl -n hw.ncpu)
+JOBS=$(( THREADS / 4 )); [ "$JOBS" -lt 1 ] && JOBS=1
+
+# ------------------------------------------------------------------------------
+# 3. 執行分析流程
+# ------------------------------------------------------------------------------
+
+# --- [Stage 1: Fastp Trimming] ---
+if [[ "$RUN_S1" == "y" ]]; then
+    ask_to_run "Fastp Quality Control" "$STAGE1/trim" SKIP_FASTP
+    if [[ "$SKIP_FASTP" != true ]]; then
+        echo "執行 Fastp..."
+        ls ${RAW_PATH}/*_R1_001.fast* > raw_list.txt
+        parallel -j "$JOBS" --bar "
+          r1={}
+          r2=\$(echo \$r1 | sed 's/_R1_/_R2_/')
+          ext=\$(basename \$r1 | sed 's/.*_R1_001//')
+          base=\$(basename \$r1 _R1_001\$ext)
+          fastp -i \"\$r1\" -I \"\$r2\" -o $STAGE1/trim/\${base}_R1_001.fastq.gz -O $STAGE1/trim/\${base}_R2_001.fastq.gz \
+            --thread 2 --qualified_quality_phred 30 --length_required 80 \
+            --html $STAGE1/fastp_report/\${base}.html --json $STAGE1/fastp_report/\${base}.json
+        " < raw_list.txt
+    fi
+fi
+
+# --- [Stage 2: BWA Alignment] ---
+if [[ "$RUN_S2" == "y" ]]; then
+    ask_to_run "BWA Alignment" "$STAGE2/mapped_bam" SKIP_BWA
+    if [[ "$SKIP_BWA" != true ]]; then
+        echo "執行 BWA Mapping..."
+        while read r1; do
+            base=$(basename "$r1" _R1_001.fastq.gz)
+            r2="$STAGE1/trim/${base}_R2_001.fastq.gz"
+            bwa mem -t "$THREADS" "$REF_GENOME" "$r1" "$r2" > "$STAGE2/bam/${base}.sam"
+            samtools view -Sb "$STAGE2/bam/${base}.sam" > "$STAGE2/bam/${base}.bam"
+            samtools view -bF4 -@ "$THREADS" "$STAGE2/bam/${base}.bam" > "$STAGE2/mapped_bam/${base}.bam"
+            samtools sort -@ "$THREADS" -o "$STAGE2/mapped_bam/${base}_sorted.bam" "$STAGE2/mapped_bam/${base}.bam"
+            mv "$STAGE2/mapped_bam/${base}_sorted.bam" "$STAGE2/mapped_bam/${base}.bam"
+            samtools index "$STAGE2/mapped_bam/${base}.bam"
+            samtools flagstat "$STAGE2/bam/${base}.bam" > "$STAGE2/mapping_results/${base}.txt"
+            rm "$STAGE2/bam/${base}.sam"
+        done < <(ls $STAGE1/trim/*_R1_001.fastq.gz)
+    fi
+fi
+
+# ------------------------------------------------------------------------------
+# 6. Stage 3: 生成 Mapping Summary 與 PCA 篩選 (黃金代碼對接區)
+# ------------------------------------------------------------------------------
+if [[ "$RUN_S3" == "y" ]]; then
+    echo "[5/8] 生成比對報表與 PCA 品質檢測..."
+    SUMMARY_CSV="$STAGE3/${PROJECT_NAME}_mapping_summary.csv"
+    BAM_LIST="$STAGE3/${PROJECT_NAME}_bwa_mapped.bamfile"
+
+    # 確保基礎 BAM LIST 存在 (對應分類資料夾路徑)
+    ls -d "$PWD/$STAGE2/mapped_bam/"*.bam > "$BAM_LIST"
+
+    ask_to_run "PCA Analysis & Outlier Detection" "$SUMMARY_CSV" SKIP_PCA
+
+    if [ "$SKIP_PCA" = true ]; then
+        echo ">>> 跳過 PCA 分析，嘗試載入先前的過濾結果..."
+        if [ -f "$STAGE3/${PROJECT_NAME}_after_pca.bamfile" ]; then
+            BAM_LIST="$STAGE3/${PROJECT_NAME}_after_pca.bamfile"
+            echo "[!] 載入既有的 PCA 過濾後清單: $(wc -l < "$BAM_LIST") 個樣本"
+        else
+            echo "[!] 未發現過濾後清單，假設上次選擇保留所有樣本 (或無 Outlier)。"
+        fi
+    else
+        # --- 原本的 PCA 流程 ---
+        echo "Sample,Total,Mapped,Properly_Paired,With_Mate_Mapped,Singletons,Mate_Diff_Chr,Mate_Diff_Chr_MapQ5,Secondary,Supplementary,Duplicates,Paired_in_Seq,Read1,Read2" > "$SUMMARY_CSV"
+
+        for f in $STAGE2/mapping_results/*.txt; do
+            sample=$(basename "$f" .txt)
+            total=$(grep "in total" "$f" | head -1 | awk '{print $1}')
+            mapped=$(grep " mapped (" "$f" | awk '{print $1}')
+            properly_paired=$(grep "properly paired" "$f" | awk '{print $1}')
+            with_mate=$(grep "with itself and mate mapped" "$f" | awk '{print $1}')
+            singletons=$(grep "singletons" "$f" | awk '{print $1}')
+            mate_diff_chr=$(grep "with mate mapped to a different chr$" "$f" | awk '{print $1}')
+            mate_diff_chr_q5=$(grep "with mate mapped to a different chr (mapQ>=5)" "$f" | awk '{print $1}')
+            secondary=$(grep " secondary" "$f" | awk '{print $1}')
+            supplementary=$(grep " supplementary" "$f" | awk '{print $1}')
+            duplicates=$(grep " duplicates" "$f" | awk '{print $1}')
+            paired_in_seq=$(grep "paired in sequencing" "$f" | awk '{print $1}')
+            read1=$(grep " read1" "$f" | awk '{print $1}')
+            read2=$(grep " read2" "$f" | awk '{print $1}')
+            echo "$sample,$total,$mapped,$properly_paired,$with_mate,$singletons,$mate_diff_chr,$mate_diff_chr_q5,$secondary,$supplementary,$duplicates,$paired_in_seq,$read1,$read2" >> "$SUMMARY_CSV"
+        done
+
+        # --- PCA R 腳本 ---
+        PCA_SCRIPT="$STAGE3/${PROJECT_NAME}_PCA.r"
+        cat << R_CODE > "$PCA_SCRIPT"
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(ggrepel)
+
+df <- read_csv("$SUMMARY_CSV", show_col_types = FALSE)
+original_bams <- read.table("$BAM_LIST", header = FALSE, stringsAsFactors = FALSE)
+colnames(original_bams) <- c("FilePath")
+original_bams\$Sample <- gsub(".bam$", "", basename(original_bams\$FilePath))
+
+df_pca <- df %>%
+  transmute(
+    Sample = Sample,
+    Total = as.numeric(Total),
+    Mapped = as.numeric(Mapped),
+    Properly_Paired = as.numeric(Properly_Paired),
+    Singletons = as.numeric(Singletons),
+    mapping_rate = ifelse(Total > 0, Mapped / Total, NA_real_),
+    properly_paired_rate = ifelse(Total > 0, Properly_Paired / Total, NA_real_),
+    pairing_efficiency = ifelse(Mapped > 0, Properly_Paired / Mapped, NA_real_),
+    singleton_rate = ifelse(Total > 0, Singletons / Total, NA_real_),
+    logTotal = log10(Total + 1)
+  ) %>%
+  filter(if_all(c(mapping_rate, pairing_efficiency, singleton_rate, properly_paired_rate, logTotal), ~ !is.na(.)))
+
+X <- df_pca %>% select(mapping_rate, pairing_efficiency, singleton_rate) %>% as.data.frame()
+pca_cor <- prcomp(X, center = TRUE, scale. = TRUE)
+scores <- as.data.frame(pca_cor\$x[, 1:2])
+scores\$Sample <- df_pca\$Sample
+
+# 判定與繪圖 (Mahalanobis Distance)
+n <- nrow(scores); p_vars <- 2
+cutoff <- qf(0.95, p_vars, n - 1) * (p_vars * (n - 1) / (n - p_vars))
+scores\$dist_sq <- mahalanobis(scores[, 1:2], center = colMeans(scores[, 1:2]), cov = cov(scores[, 1:2]))
+scores\$is_outlier <- scores\$dist_sq > cutoff
+
+# 繪製 PDF
+p <- ggplot(scores, aes(PC1, PC2)) +
+  stat_ellipse(type = "norm", level = 0.95, linetype = "dashed", color = "darkgreen") +
+  geom_point(aes(color = is_outlier), size = 2.6) +
+  scale_color_manual(values = c("FALSE" = "black", "TRUE" = "red")) +
+  geom_text_repel(data = subset(scores, is_outlier), aes(label = Sample), color = "red") +
+  theme_classic()
+
+ggsave("$STAGE3/${PROJECT_NAME}_PCA_Mapping_Quality.pdf", plot = p, width = 8, height = 7)
+
+# 產出過濾後的 BAM 清單
+valid_samples <- scores\$Sample[!scores\$is_outlier]
+write.table(scores\$Sample[scores\$is_outlier], "$STAGE3/${PROJECT_NAME}_outliers.txt", quote = FALSE, row.names = FALSE, col.names = FALSE)
+to_keep_bams <- original_bams %>% filter(Sample %in% valid_samples) %>% select(FilePath)
+write.table(to_keep_bams, "$STAGE3/${PROJECT_NAME}_after_pca.bamfile", quote = FALSE, row.names = FALSE, col.names = FALSE)
+R_CODE
+
+        Rscript "$PCA_SCRIPT"
+
+        # 統計過濾結果
+        N_ORIG=$(wc -l < "$BAM_LIST")
+        N_AFTER=$(wc -l < "$STAGE3/${PROJECT_NAME}_after_pca.bamfile")
+        N_DIFF=$((N_ORIG - N_AFTER))
+
+        echo "-------------------------------------------------------"
+        echo "[品質控管結果摘要]"
+        echo "原始輸入樣本總數: $N_ORIG"
+        echo "PCA 檢測建議保留樣本數: $N_AFTER"
+        echo "被剔除的樣本數: $N_DIFF"
+        echo "-------------------------------------------------------"
+
+        OUTLIER_FILE="$STAGE3/${PROJECT_NAME}_outliers.txt"
+        if [ -s "$OUTLIER_FILE" ]; then
+            echo "偵測到 $N_DIFF 個 PCA Outliers:"
+            cat "$OUTLIER_FILE"
+            if [ "$RUN_MODE" == "1" ]; then
+                PCA_DECISION=$AUTO_PCA_CHOICE
+                echo "自動模式：套用預設選項 ($PCA_DECISION)"
+            else
+                read -p "是否移除離群樣本？(1:移除, 2:保留): " PCA_DECISION < /dev/tty
+            fi
+
+            if [ "$PCA_DECISION" == "1" ]; then
+                BAM_LIST="$STAGE3/${PROJECT_NAME}_after_pca.bamfile"
+                echo "[!] 已套用過濾後的 BAM 清單，當前分析規模: $(wc -l < "$BAM_LIST") 個樣本。"
+            else
+                echo "[+] 已選擇保留離群樣本，維持原始分析規模。"
+            fi
+        fi
+    fi
+fi
+
+# ------------------------------------------------------------------------------
+# 7. 執行 Clone 偵測 (黃金代碼對接區)
+# ------------------------------------------------------------------------------
+if [[ "$RUN_S4" == "y" ]]; then
+    # 若上一動沒跑 S3，則需要確保有基礎的 BAM LIST，路徑對接至 Stage 3 的產出
+    [ -z "$BAM_LIST" ] && BAM_LIST="$STAGE3/${PROJECT_NAME}_bwa_mapped.bamfile"
+
+    echo "[6/8] 執行 Clone 偵測分析 (ANGSD IBS)..."
+    # 呼叫斷點續傳函式，檢查是否存在 IBS 矩陣檔案
+    ask_to_run "Clone Detection (IBS Matrix)" "$STAGE4/${PROJECT_NAME}_clone_identification.ibsMat" SKIP_CLONE_CALC
+
+    if [ "$SKIP_CLONE_CALC" = true ]; then
+        echo ">>> 跳過 Clone 計算，嘗試載入先前的去重結果..."
+        # 檢查是否存在去重後的 BAM 清單，若有則直接讀取
+        if [ -f "$STAGE4/${PROJECT_NAME}_after_clones.bamfile" ]; then
+            BAM_LIST="$STAGE4/${PROJECT_NAME}_after_clones.bamfile"
+            echo "[!] 載入既有的 Clone 去重後清單: $(wc -l < "$BAM_LIST") 個樣本"
+        else
+            echo "[!] 未發現過濾後清單，假設上次選擇保留 Clone 或無 Clone。"
+        fi
+    else
+        # --- 原本的 Clone 流程：參數與邏輯維持黃金版本 ---
+        N_IND_TMP=$(wc -l < "$BAM_LIST")
+        # 設定最小樣本覆蓋門檻，此處維持 70% 樣本數 
+        MIN_IND_TMP=$(echo "$N_IND_TMP * 0.7 / 1" | bc)
+
+        # 使用 ANGSD 計算 IBS (Identity by State) 矩陣，用於評估樣本遺傳一致性
+        angsd -bam "$BAM_LIST" -GL 1 -P 1 -uniqueOnly 1 -remove_bads 1 -minMapQ 20 -minQ 30 -minInd "$MIN_IND_TMP" \
+              -snp_pval 1e-5 -minMaf 0.05 -doMajorMinor 1 -doMaf 1 -doCounts 1 -makeMatrix 1 \
+              -doIBS 1 -doCov 1 -doGeno 32 -doPost 1 -doGlf 2 -out "$STAGE4/${PROJECT_NAME}_clone_identification"
+
+        # 解壓 ANGSD 產出的中間檔以供 R 讀取
+        gzip -kfd "$STAGE4"/*.gz 2>/dev/null || true
+
+        # --- Clone R 腳本：執行層次聚類與專家邏輯門檻判定 ---
+        cat << R_CODE > "$STAGE4/${PROJECT_NAME}_identify_clones.r"
+library(readr)
+library(dplyr)
+
+# 1. 讀取遺傳距離數據與樣本路徑
+ma <- as.matrix(read.table("$STAGE4/${PROJECT_NAME}_clone_identification.ibsMat"))
+bams <- read.table("$BAM_LIST", header = FALSE, stringsAsFactors = FALSE)
+colnames(bams) <- c("FilePath")
+bams\$Sample <- gsub(".bam$", "", basename(bams\$FilePath))
+dimnames(ma) <- list(bams\$Sample, bams\$Sample)
+
+# 2. 執行層次聚類 (Hierarchical Clustering)
+hc <- hclust(as.dist(ma), "ave")
+
+# 根據樣本數量動態調整 PDF 寬度
+dynamic_width <- max(12, nrow(bams) * 0.2)
+
+# 輸出原始聚類圖，不含任何門檻標記
+pdf("$STAGE4/${PROJECT_NAME}_Clone_Dendrogram_RAW.pdf", width = dynamic_width, height = 10)
+plot(hc, cex=0.7, main="Raw Clustering of Samples (IBS Distance)")
+dev.off()
+
+# 統計跳躍點偵測邏輯
+h <- hc\$height
+gaps <- diff(h) # 計算分支高度間的間隙
+
+# 定義背景雜訊區域 (取前 5 個分支高度)
+ref_idx <- 1:min(5, length(gaps))
+noise_mean <- mean(gaps[ref_idx])
+noise_sd <- sd(gaps[ref_idx])
+
+# 尋找第一個顯著超過背景雜訊 (3倍標準差) 的跳躍點
+jump_idx <- which(gaps > (noise_mean + 3 * noise_sd))[1]
+
+# 判斷分支邏輯：若偵測到早期顯著跳躍點則作為門檻，否則使用物理約束區間
+if (!is.na(jump_idx) && jump_idx <= 10) {
+  threshold_h <- (h[jump_idx] + h[jump_idx + 1]) / 2
+} else {
+  threshold_h <- max(0.05, min(h[1] * 1.2, 0.2))
+}
+
+# 3. 執行樣本分群並建立結果表格
+clusters <- cutree(hc, h = threshold_h)
+df_clusters <- data.frame(Sample = bams\$Sample, FilePath = bams\$FilePath, ClusterID = clusters)
+
+# 識別包含複本樣本的群組
+clone_cluster_ids <- which(table(clusters) > 1)
+
+# 寫出建議移除的名單 (每個 Clone 群組僅保留一個代表樣本)
+write.table(df_clusters %>% 
+              filter(ClusterID %in% names(clone_cluster_ids)) %>% 
+              group_by(ClusterID) %>% 
+              slice(-1) %>% 
+              ungroup() %>% 
+              select(Sample), 
+            "$STAGE4/${PROJECT_NAME}_clones_to_review.txt", quote = FALSE, row.names = FALSE, col.names = FALSE)
+
+# 寫出保留下來的樣本路徑清單
+write.table(df_clusters[!duplicated(df_clusters\$ClusterID), "FilePath"], 
+            "$STAGE4/${PROJECT_NAME}_after_clones.bamfile", quote = FALSE, row.names = FALSE, col.names = FALSE)
+
+# 4. 繪製帶有判定門檻（紅線）的診斷圖
+pdf("$STAGE4/${PROJECT_NAME}_Clone_Dendrogram_Filtered.pdf", width = dynamic_width, height = 10)
+plot(hc, cex=0.7, main=paste("Expert-Logic Gap Detection (h =", round(threshold_h, 4), ")"))
+abline(h = threshold_h, col = "red", lty = 2, lwd = 2) 
+dev.off()
+
+# 輸出統計診斷數值至終端機
+cat(paste("[R] 統計診斷：底噪高度", round(h[1], 4), "| 自動門檻", round(threshold_h, 4), "\n"))
+R_CODE
+
+        Rscript "$STAGE4/${PROJECT_NAME}_identify_clones.r"
+
+        # Clone 統計與決策傳遞
+        CLONE_REVIEW_FILE="$STAGE4/${PROJECT_NAME}_clones_to_review.txt"
+        N_CLONE_BEFORE=$(wc -l < "$BAM_LIST")
+        N_CLONE_AFTER=$(wc -l < "$STAGE4/${PROJECT_NAME}_after_clones.bamfile")
+        N_CLONE_COUNT=$(wc -l < "$CLONE_REVIEW_FILE")
+
+        echo "-------------------------------------------------------"
+        echo "[Clone樣本偵測報告]"
+        echo "1. 原始 PDF (無門檻): $STAGE4/${PROJECT_NAME}_Clone_Dendrogram_RAW.pdf"
+        echo "2. 決策 PDF (含紅線): $STAGE4/${PROJECT_NAME}_Clone_Dendrogram_Filtered.pdf"
+        echo "進入偵測之樣本總數: $N_CLONE_BEFORE"
+        echo "剔除Clone樣本後建議樣本數: $N_CLONE_AFTER"
+        echo "偵測到 $N_CLONE_COUNT 個潛在Clone樣本"
+        echo "-------------------------------------------------------"
+
+        if [ -s "$CLONE_REVIEW_FILE" ]; then
+            echo "偵測到以下潛在Clone樣本 (建議移除名單):"
+            cat "$CLONE_REVIEW_FILE"
+            echo "-------------------------------------------------------"
+
+            if [ "$RUN_MODE" == "1" ]; then
+                CLONE_DECISION=$AUTO_CLONE_CHOICE
+                echo "自動模式：套用預設選項 ($CLONE_DECISION)"
+            else
+                read -p "是否移除上述Clone樣本？(1:移除, 2:保留): " CLONE_DECISION < /dev/tty
+            fi
+
+            if [ "$CLONE_DECISION" == "1" ]; then
+                BAM_LIST="$STAGE4/${PROJECT_NAME}_after_clones.bamfile"
+                echo "[!] 已套用去重後的最終 BAM 清單，當前分析樣本數: $(wc -l < "$BAM_LIST") 個樣本。"
+            else
+                echo "[+] 已選擇保留Clone樣本，維持樣本數: $N_CLONE_BEFORE"
+            fi
+        fi
+    fi
+fi
+
+# --- [共用邏輯：BAM 清單定位與樣本數計算] ---
+# 若執行 S5 或 S6，皆需確認輸入樣本清單與動態門檻
+if [[ "$RUN_S5" == "y" || "$RUN_S6" == "y" ]]; then
+    [ -f "$STAGE4/${PROJECT_NAME}_after_clones.bamfile" ] && BAM_LIST="$STAGE4/${PROJECT_NAME}_after_clones.bamfile" || \
+    { [ -f "$STAGE3/${PROJECT_NAME}_after_pca.bamfile" ] && BAM_LIST="$STAGE3/${PROJECT_NAME}_after_pca.bamfile" || \
+      BAM_LIST="$STAGE3/${PROJECT_NAME}_bwa_mapped.bamfile"; }
+    
+    [ ! -s "$BAM_LIST" ] && { echo "錯誤：找不到有效的 BAM 清單。"; exit 1; }
+    
+    N_IND=$(wc -l < "$BAM_LIST")
+    MIN_IND=$(echo "$N_IND * 0.7 / 1" | bc)
+fi
+
+# --- [Stage 5: LD Pruning & Site Map Generation] ---
+if [[ "$RUN_S5" == "y" ]]; then
+    echo "[7/8] 執行 LD Pruning 產生非連鎖不平衡位點表..."
+    ask_to_run "LD Pruning (Site Map)" "$STAGE5/LDpruned_snp.sites" SKIP_S5
+    
+    if [[ "$SKIP_S5" != true ]]; then
+        # 執行初步 SNP Calling 以獲取全位點資訊
+        angsd -b "$BAM_LIST" -GL 1 -uniqueOnly 1 -remove_bads 1 -minMapQ 30 -baq 1 -setMinDepth 5 -SNP_pval 1e-6 -skipTriallelic 1 -doHWE 1 -Hetbias_pval 0.00001 -minInd "$MIN_IND" -doMajorMinor 1 -doMaf 1 -dosnpstat 1 -doPost 2 -doGeno 32 -doCounts 1 -ref "$REF_GENOME" -P 1 -out "$STAGE5/allsnps"
+        
+        gzip -kfd $STAGE5/*.gz
+        gunzip -c "$STAGE5/allsnps.mafs.gz" | tail -n +2 | cut -f 1,2 > "$STAGE5/mc1.sites"
+        N_SITES=$(wc -l < "$STAGE5/mc1.sites")
+        
+        # 計算 LD 矩陣與執行位點修剪 (Pruning)
+        ngsLD --geno "$STAGE5/allsnps.geno" --verbose 1 --probs 1 --n_ind "$N_IND" --n_sites "$N_SITES" --max_kb_dist 50 --pos "$STAGE5/mc1.sites" --n_threads "$THREADS" --extend_out 1 --out "$STAGE5/allsnpsites.LD"
+        
+        prune_graph --header -v -n "$THREADS" --in "$STAGE5/allsnpsites.LD" --weight-field "r2" --weight-filter "dist <=10000 && r2 >= 0.5" --out "$STAGE5/allsnpsites.pos"
+        
+        # 轉換格式並建立索引
+        sed 's/:/\t/g' "$STAGE5/allsnpsites.pos" | awk '$2!=""' | sort -k1 > "$STAGE5/LDpruned_snp.sites"
+        angsd sites index "$STAGE5/LDpruned_snp.sites"
+        
+        echo "[完成] LD Pruned Site Map 已產出: $STAGE5/LDpruned_snp.sites"
+    fi
+fi
+
+# --- [Stage 6: Final SNP Calling] ---
+if [[ "$RUN_S6" == "y" ]]; then
+    echo "[8/8] 執行最終 SNP Calling (基於 LD Pruned Sites)..."
+    
+    # 強制檢查上游位點表是否存在
+    if [ ! -f "$STAGE5/LDpruned_snp.sites" ]; then
+        echo "錯誤：未發現 LD Pruning 產出的位點表 ($STAGE5/LDpruned_snp.sites)。"
+        echo "請先執行 Stage 5 或確保該路徑下檔案完整。"
+        exit 1
+    fi
+
+    ask_to_run "Final VCF" "$STAGE5/${PROJECT_NAME}_snps_final.vcf" SKIP_S6
+    
+    if [[ "$SKIP_S6" != true ]]; then
+        # 套用 LD-pruned sites 進行高精準度 SNP Calling
+        angsd -sites "$STAGE5/LDpruned_snp.sites" -b "$BAM_LIST" -GL 1 -P 1 -minInd "$MIN_IND" -minMapQ 20 -minQ 25 -sb_pval 1e-5 -Hetbias_pval 1e-5 -skipTriallelic 1 -snp_pval 1e-5 -minMaf 0.05 -doMajorMinor 1 -doMaf 1 -doCounts 1 -doGlf 2 -dosnpstat 1 -doPost 1 -doGeno 8 -doBcf 1 --ignore-RG 0 -doHWE 1 -ref "$REF_GENOME" -out "$STAGE5/${PROJECT_NAME}_snps_final"
+        
+        # 轉換 BCF 為 VCF
+        bcftools view -O v -o "$STAGE5/${PROJECT_NAME}_snps_final.vcf" "$STAGE5/${PROJECT_NAME}_snps_final.bcf"
+        
+        echo "[完成] 最終 SNP Call Set 已產出: $STAGE5/${PROJECT_NAME}_snps_final.vcf"
+    fi
+fi
+echo "======================================================="
+echo "分析結束: $(date)"
+echo "產出 VCF: $STAGE5/${PROJECT_NAME}_snps_final.vcf"
+echo "日誌位置: $LOG_FILE"
+echo "======================================================="
