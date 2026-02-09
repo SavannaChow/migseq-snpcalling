@@ -14,7 +14,7 @@ ask_to_run() {
     local check_target=$2
     local skip_var_name=$3
     local exists=false
-    if [ -f "$check_target" ]; then exists=true; elif [ -d "$check_target" ] && [ "$(ls -A $check_target 2>/dev/null)" ]; then exists=true; fi
+    if [ -f "$check_target" ]; then exists=true; elif [ -d "$check_target" ] && [ "$(ls -A "$check_target" 2>/dev/null)" ]; then exists=true; fi
     if [ "$exists" = true ]; then
         echo "-------------------------------------------------------"
         echo "[偵測到已存在的分析結果]: $step_name"
@@ -72,7 +72,7 @@ fi
 echo "-------------------------------------------------------"
 echo "分析流程選擇 (Stage Selector):"
 echo "1) 執行完整流程 (Stage 1-6)"
-echo "2) 僅執行上游處理 (1. Trimming & 2. Alignment)"
+echo "2) 僅執行上幫處理 (1. Trimming & 2. Alignment)"
 echo "3) 執行過濾分析 (3. PCA Outlier & 4. Clone Filtering)"
 echo "4) 僅執行 LD Pruning (5. 產生非連鎖不平衡位點表)"
 echo "5) 執行最終 SNP Calling (6. 基於現有位點表進行 call set)"
@@ -122,15 +122,15 @@ if [[ "$RUN_S1" == "y" ]]; then
     ask_to_run "Fastp Quality Control" "$STAGE1/trim" SKIP_FASTP
     if [[ "$SKIP_FASTP" != true ]]; then
         echo "執行 Fastp..."
-        ls ${RAW_PATH}/*_R1_001.fast* > raw_list.txt
+        ls "${RAW_PATH}"/*_R1_001.fast* > raw_list.txt
         parallel -j "$JOBS" --bar "
-          r1={}
-          r2=\$(echo \$r1 | sed 's/_R1_/_R2_/')
-          ext=\$(basename \$r1 | sed 's/.*_R1_001//')
-          base=\$(basename \$r1 _R1_001\$ext)
-          fastp -i \"\$r1\" -I \"\$r2\" -o $STAGE1/trim/\${base}_R1_001.fastq.gz -O $STAGE1/trim/\${base}_R2_001.fastq.gz \
+          r1=\"{}\"
+          r2=\$(echo \"\$r1\" | sed 's/_R1_/_R2_/')
+          ext=\$(basename \"\$r1\" | sed 's/.*_R1_001//')
+          base=\$(basename \"\$r1\" _R1_001\$ext)
+          fastp -i \"\$r1\" -I \"\$r2\" -o \"$STAGE1/trim/\${base}_R1_001.fastq.gz\" -O \"$STAGE1/trim/\${base}_R2_001.fastq.gz\" \
             --thread 2 --qualified_quality_phred 30 --length_required 80 \
-            --html $STAGE1/fastp_report/\${base}.html --json $STAGE1/fastp_report/\${base}.json
+            --html \"$STAGE1/fastp_report/\${base}.html\" --json \"$STAGE1/fastp_report/\${base}.json\"
         " < raw_list.txt
     fi
 fi
@@ -140,7 +140,7 @@ if [[ "$RUN_S2" == "y" ]]; then
     ask_to_run "BWA Alignment" "$STAGE2/mapped_bam" SKIP_BWA
     if [[ "$SKIP_BWA" != true ]]; then
         echo "執行 BWA Mapping..."
-        while read r1; do
+        while read -r r1; do
             base=$(basename "$r1" _R1_001.fastq.gz)
             r2="$STAGE1/trim/${base}_R2_001.fastq.gz"
             bwa mem -t "$THREADS" "$REF_GENOME" "$r1" "$r2" > "$STAGE2/bam/${base}.sam"
@@ -151,7 +151,7 @@ if [[ "$RUN_S2" == "y" ]]; then
             samtools index "$STAGE2/mapped_bam/${base}.bam"
             samtools flagstat "$STAGE2/bam/${base}.bam" > "$STAGE2/mapping_results/${base}.txt"
             rm "$STAGE2/bam/${base}.sam"
-        done < <(ls $STAGE1/trim/*_R1_001.fastq.gz)
+        done < <(ls "$STAGE1/trim"/*_R1_001.fastq.gz)
     fi
 fi
 
@@ -180,7 +180,7 @@ if [[ "$RUN_S3" == "y" ]]; then
         # --- 原本的 PCA 流程 ---
         echo "Sample,Total,Mapped,Properly_Paired,With_Mate_Mapped,Singletons,Mate_Diff_Chr,Mate_Diff_Chr_MapQ5,Secondary,Supplementary,Duplicates,Paired_in_Seq,Read1,Read2" > "$SUMMARY_CSV"
 
-        for f in $STAGE2/mapping_results/*.txt; do
+        for f in "$STAGE2/mapping_results"/*.txt; do
             sample=$(basename "$f" .txt)
             total=$(grep "in total" "$f" | head -1 | awk '{print $1}')
             mapped=$(grep " mapped (" "$f" | awk '{print $1}')
@@ -512,7 +512,7 @@ if [[ "$RUN_S5" == "y" ]]; then
         # 執行初步 SNP Calling 以獲取全位點資訊
         angsd -b "$BAM_LIST" -GL 1 -uniqueOnly 1 -remove_bads 1 -minMapQ 30 -baq 1 -setMinDepth 5 -SNP_pval 1e-6 -skipTriallelic 1 -doHWE 1 -Hetbias_pval 0.00001 -minInd "$MIN_IND" -doMajorMinor 1 -doMaf 1 -dosnpstat 1 -doPost 2 -doGeno 32 -doCounts 1 -ref "$REF_GENOME" -P 1 -out "$STAGE5/allsnps"
         
-        gzip -kfd $STAGE5/*.gz
+        gzip -kfd "$STAGE5"/*.gz
         gunzip -c "$STAGE5/allsnps.mafs.gz" | tail -n +2 | cut -f 1,2 > "$STAGE5/mc1.sites"
         N_SITES=$(wc -l < "$STAGE5/mc1.sites")
         
