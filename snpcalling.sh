@@ -436,16 +436,72 @@ fi
 
 # --- [共用邏輯：BAM 清單定位與樣本數計算] ---
 # 若執行 S5 或 S6，皆需確認輸入樣本清單與動態門檻
+# ==============================================================================
+# 核心邏輯：BAM 清單定位 (區分「完整自動」與「手動自選」)
+# ==============================================================================
+# ==============================================================================
+# 核心邏輯：動態掃描與樣本清單選取
+# ==============================================================================
 if [[ "$RUN_S5" == "y" || "$RUN_S6" == "y" ]]; then
-    [ -f "$STAGE4/${PROJECT_NAME}_after_clones.bamfile" ] && BAM_LIST="$STAGE4/${PROJECT_NAME}_after_clones.bamfile" || \
-    { [ -f "$STAGE3/${PROJECT_NAME}_after_pca.bamfile" ] && BAM_LIST="$STAGE3/${PROJECT_NAME}_after_pca.bamfile" || \
-      BAM_LIST="$STAGE3/${PROJECT_NAME}_bwa_mapped.bamfile"; }
-    
-    [ ! -s "$BAM_LIST" ] && { echo "錯誤：找不到有效的 BAM 清單。"; exit 1; }
-    
+    # 預設清單定義 (用於自動模式或快速參考)
+    LIST_FINAL="$STAGE4/${PROJECT_NAME}_after_clones.bamfile"
+    LIST_PCA_ONLY="$STAGE3/${PROJECT_NAME}_after_pca.bamfile"
+    LIST_FULL="$STAGE3/${PROJECT_NAME}_bwa_mapped.bamfile"
+
+    if [ "$RUN_CHOICE" == "1" ]; then
+        # 完整流程自動模式：優先級判定
+        if [ -f "$LIST_FINAL" ]; then BAM_LIST="$LIST_FINAL"
+        elif [ -f "$LIST_PCA_ONLY" ]; then BAM_LIST="$LIST_PCA_ONLY"
+        else BAM_LIST="$LIST_FULL"
+        fi
+        echo "[自動流程] 選取當前最完善清單: $(basename "$BAM_LIST")"
+    else
+        # 手動/自選模式：自動掃描目錄下所有 .bamfile
+        echo "-------------------------------------------------------"
+        echo "[手動模式] 正在掃描目錄下可用的 .bamfile 清單..."
+        
+        # 搜尋當前目錄與二層子目錄內所有的 .bamfile 並存入陣列
+        mapfile -t FOUND_LISTS < <(find . -maxdepth 3 -name "*.bamfile" | sort)
+        
+        if [ ${#FOUND_LISTS[@]} -eq 0 ]; then
+            echo "[警告] 未在專案目錄中偵測到任何 .bamfile。"
+            read -e -p "請手動輸入自訂清單的完整路徑: " BAM_LIST < /dev/tty
+        else
+            echo "偵測到以下樣本清單，請選擇欲使用的檔案："
+            for i in "${!FOUND_LISTS[@]}"; do
+                # 標註哪些是腳本預設產出的檔案，方便識別
+                note=""
+                [[ "${FOUND_LISTS[$i]}" == *"$LIST_FINAL" ]] && note="(預設最終清單)"
+                [[ "${FOUND_LISTS[$i]}" == *"$LIST_PCA_ONLY" ]] && note="(預設 PCA 過濾清單)"
+                [[ "${FOUND_LISTS[$i]}" == *"$LIST_FULL" ]] && note="(預設原始清單)"
+                
+                printf "%2d) %s %s\n" "$((i+1))" "${FOUND_LISTS[$i]}" "$note"
+            done
+            echo " q) 手動輸入其他路徑"
+            
+            read -p "請輸入選項 (1-${#FOUND_LISTS[@]} 或 q): " FILE_CHOICE < /dev/tty
+            
+            if [[ "$FILE_CHOICE" =~ ^[0-9]+$ ]] && [ "$FILE_CHOICE" -le "${#FOUND_LISTS[@]}" ]; then
+                BAM_LIST="${FOUND_LISTS[$((FILE_CHOICE-1))]}"
+            else
+                read -e -p "請輸入自訂清單路徑: " BAM_LIST < /dev/tty
+            fi
+        fi
+    fi
+
+    # 驗證最終選擇的檔案
+    if [ ! -s "$BAM_LIST" ]; then
+        echo "錯誤：指定的清單檔案「$BAM_LIST」不存在或為空。"
+        exit 1
+    fi
+
+    # 根據選定的清單內容，動態更新樣本總數與 70% 門檻 (MIN_IND)
     N_IND=$(wc -l < "$BAM_LIST")
     MIN_IND=$(echo "$N_IND * 0.7 / 1" | bc)
+    echo "[確認] 當前分析清單：$BAM_LIST"
+    echo "[確認] 樣本總數：$N_IND，SNP Calling 門檻 (70%)：$MIN_IND"
 fi
+
 
 # --- [Stage 5: LD Pruning & Site Map Generation] ---
 if [[ "$RUN_S5" == "y" ]]; then
