@@ -1,10 +1,10 @@
 #!/bin/bash
-
 # ==============================================================================
 # MIG Analysis Full Pipeline - Smart Hybrid Mode (v8.12)
 # 核心原則：絕對禁止更動黃金版本的 R code、統計參數、選單結構與文字顯示。
 # 修改內容：僅將檔案輸出導向至 00_Logs ~ 05_SNP_Calling 分類資料夾。
 # ==============================================================================
+source ~/.bashrc
 
 # ------------------------------------------------------------------------------
 # 0. 輔助函式定義
@@ -56,6 +56,7 @@ read -e -p "請輸入原始序列 (raw data) 資料夾路徑: " RAW_PATH
 RAW_PATH=$(realpath "$RAW_PATH")
 
 # 1.2 參考基因組配置
+source ~/.bashrc
 MAPFILE=()
 while IFS= read -r varname; do [[ $varname == Ref* ]] && MAPFILE+=("$varname"); done < <(env | cut -d= -f1 | grep '^Ref')
 echo "--- 可用的參考基因組 ---"
