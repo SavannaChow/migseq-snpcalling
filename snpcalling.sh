@@ -471,9 +471,9 @@ if [[ "$RUN_S5" == "y" || "$RUN_S6" == "y" ]]; then
             for i in "${!FOUND_LISTS[@]}"; do
                 # 標註哪些是腳本預設產出的檔案，方便識別
                 note=""
-                [[ "${FOUND_LISTS[$i]}" == *"$LIST_FINAL" ]] && note="(預設最終清單)"
-                [[ "${FOUND_LISTS[$i]}" == *"$LIST_PCA_ONLY" ]] && note="(預設 PCA 過濾清單)"
-                [[ "${FOUND_LISTS[$i]}" == *"$LIST_FULL" ]] && note="(預設原始清單)"
+                [[ "${FOUND_LISTS[$i]}" == *"$LIST_FINAL" ]] && note="(預設清理過outlier與clone的清單)"
+                [[ "${FOUND_LISTS[$i]}" == *"$LIST_PCA_ONLY" ]] && note="(預設 PCA outlier 過濾清單)"
+                [[ "${FOUND_LISTS[$i]}" == *"$LIST_FULL" ]] && note="(預設無清理過outlier與clone清單)"
                 
                 printf "%2d) %s %s\n" "$((i+1))" "${FOUND_LISTS[$i]}" "$note"
             done
