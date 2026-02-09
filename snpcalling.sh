@@ -7,6 +7,72 @@
 source ~/.bashrc
 
 # ------------------------------------------------------------------------------
+# 環境依賴檢查 (Dependency Check)
+# ------------------------------------------------------------------------------
+ENV_CHECK_FILE=".pipeline_env_ready"
+
+check_dependencies() {
+    if [ -f "$ENV_CHECK_FILE" ]; then
+        echo "[系統] 偵測到環境檢查標記，跳過軟體驗證。"
+        return 0
+    fi
+
+    echo "[系統] 正在檢查執行環境依賴項..."
+    
+    # 定義工具清單：指令名稱 | 安裝指令或網址
+    local -A tools=(
+        ["fastp"]="conda install -c bioconda fastp"
+        ["bwa"]="sudo apt-get install bwa"
+        ["samtools"]="sudo apt-get install samtools"
+        ["parallel"]="sudo apt-get install parallel"
+        ["angsd"]="http://www.popgen.dk/angsd/index.php/Installation"
+        ["ngsLD"]="https://github.com/fgvieira/ngsLD"
+        ["prune_graph"]="https://github.com/fgvieira/ngsLD (Included in ngsLD)"
+        ["bcftools"]="sudo apt-get install bcftools"
+        ["Rscript"]="sudo apt-get install r-base"
+    )
+
+    local missing_tools=()
+    local manual_install=()
+
+    for tool in "${!tools[@]}"; do
+        if ! command -v "$tool" &> /dev/null; then
+            missing_tools+=("$tool")
+        fi
+    done
+
+    if [ ${#missing_tools[@]} -eq 0 ]; then
+        echo "[系統] 所有核心套件已就緒。"
+        touch "$ENV_CHECK_FILE"
+    else
+        echo "[警告] 缺少以下套件: ${missing_tools[*]}"
+        for m_tool in "${missing_tools[@]}"; do
+            local action="${tools[$m_tool]}"
+            if [[ "$action" == http* ]]; then
+                echo "  - $m_tool: 請手動編譯安裝，參考網址: $action"
+                manual_install+=("$m_tool")
+            else
+                read -p "  - 偵測到 $m_tool 缺失，是否嘗試自動安裝? (y/n): " do_install
+                if [[ "$do_install" == "y" ]]; then
+                    eval "$action"
+                else
+                    manual_install+=("$m_tool")
+                fi
+            fi
+        done
+    fi
+
+    if [ ${#manual_install[@]} -ne 0 ]; then
+        echo "錯誤：請先解決上述手動安裝套件後再運行腳本。"
+        exit 1
+    fi
+}
+
+check_dependencies
+
+
+
+# ------------------------------------------------------------------------------
 # 0. 輔助函式定義
 # ------------------------------------------------------------------------------
 ask_to_run() {
@@ -288,6 +354,12 @@ if [[ "$RUN_S3" == "y" ]]; then
 # --- PCA R 腳本 (增強統計資訊與向量顯示版) ---
         PCA_SCRIPT="$STAGE3/${PROJECT_NAME}_PCA.r"
         cat << R_CODE > "$PCA_SCRIPT"
+# --- R Package Check & Auto-install ---
+required_packages <- c("readr", "dplyr", "ggplot2", "ggrepel")
+new_packages <- required_packages[!(required_packages %in% installed.packages()[,"Package"])]
+if(length(new_packages)) install.packages(new_packages, repos='https://cran.csie.ntu.edu.tw/')
+lapply(required_packages, library, character.only = TRUE)
+# --------------------------------------        
 library(readr)
 library(dplyr)
 library(ggplot2)
