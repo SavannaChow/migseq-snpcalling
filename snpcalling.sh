@@ -132,6 +132,15 @@ if [[ "$RUN_S1" == "y" ]]; then
             --thread 2 --qualified_quality_phred 30 --length_required 80 \
             --html \"$STAGE1/fastp_report/\${base}.html\" --json \"$STAGE1/fastp_report/\${base}.json\"
         " < raw_list.txt
+
+        N_TRIM=$(wc -l < raw_list.txt)
+        echo "-------------------------------------------------------"
+        echo "[Stage 1 完成回報]"
+        echo "處理樣本總數: $N_TRIM"
+        echo "清理後的檔案目錄: $STAGE1/trim/"
+        echo "Fastp 視覺化報告目錄: $STAGE1/fastp_report/"
+        echo "-------------------------------------------------------"
+
     fi
 fi
 
@@ -152,6 +161,16 @@ if [[ "$RUN_S2" == "y" ]]; then
             samtools flagstat "$STAGE2/bam/${base}.bam" > "$STAGE2/mapping_results/${base}.txt"
             rm "$STAGE2/bam/${base}.sam"
         done < <(ls "$STAGE1/trim"/*_R1_001.fastq.gz)
+        N_MAPPED=$(ls "$STAGE2/mapped_bam/"*.bam | wc -l)
+        echo "-------------------------------------------------------"
+        echo "[Stage 2 完成回報]"
+        echo "使用的參考基因組: $REF_GENOME"
+        echo "比對指令參數: bwa mem -t $THREADS"
+        echo "完成步驟: SAM轉換、BAM過濾(F4)、排序與建立索引"
+        echo "產出的比對檔案(BAM): $STAGE2/mapped_bam/"
+        echo "比對率統計結果: $STAGE2/mapping_results/"
+        echo "共計完成比對樣本數: $N_MAPPED"
+        echo "-------------------------------------------------------"
     fi
 fi
 
@@ -197,6 +216,15 @@ if [[ "$RUN_S3" == "y" ]]; then
             read2=$(grep " read2" "$f" | awk '{print $1}')
             echo "$sample,$total,$mapped,$properly_paired,$with_mate,$singletons,$mate_diff_chr,$mate_diff_chr_q5,$secondary,$supplementary,$duplicates,$paired_in_seq,$read1,$read2" >> "$SUMMARY_CSV"
         done
+
+        echo "-------------------------------------------------------"
+        echo "[Stage 3 進度回報]"
+        echo "Mapping Summary 資料表已生成: $SUMMARY_CSV"
+        echo "資料表頭包含: Sample, Total, Mapped, Properly_Paired, Singletons 等 14 項指標"
+        echo "對應統計來源: $STAGE2/mapping_results/"
+        echo "-------------------------------------------------------"
+
+
 
         # --- PCA R 腳本 ---
         PCA_SCRIPT="$STAGE3/${PROJECT_NAME}_PCA.r"
@@ -526,6 +554,13 @@ if [[ "$RUN_S5" == "y" ]]; then
         angsd sites index "$STAGE5/LDpruned_snp.sites"
         
         echo "[完成] LD Pruned Site Map 已產出: $STAGE5/LDpruned_snp.sites"
+        N_SITES_AFTER=$(wc -l < "$STAGE5/LDpruned_snp.sites")
+        echo "-------------------------------------------------------"
+        echo "[Stage 5 完成回報]"
+        echo "LD Pruning 前的初始位點數: $N_SITES_BEFORE"
+        echo "LD Pruning 後保留的位點數: $N_SITES_AFTER"
+        echo "位點索引檔路徑: $STAGE5/LDpruned_snp.sites"
+        echo "-------------------------------------------------------"
     fi
 fi
 
@@ -549,6 +584,12 @@ if [[ "$RUN_S6" == "y" ]]; then
         # 轉換 BCF 為 VCF
         bcftools view -O v -o "$STAGE5/${PROJECT_NAME}_snps_final.vcf" "$STAGE5/${PROJECT_NAME}_snps_final.bcf"
         
+        FINAL_SNPS=$(bcftools view -H "$STAGE5/${PROJECT_NAME}_snps_final.vcf" | wc -l)
+        echo "-------------------------------------------------------"
+        echo "[Stage 6 完成回報]"
+        echo "最終產出的 SNP 總數量: $FINAL_SNPS"
+        echo "最終 VCF 檔案路徑: $STAGE5/${PROJECT_NAME}_snps_final.vcf"
+        echo "-------------------------------------------------------"
         echo "[完成] 最終 SNP Call Set 已產出: $STAGE5/${PROJECT_NAME}_snps_final.vcf"
     fi
 fi
