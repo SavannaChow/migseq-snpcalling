@@ -58,20 +58,57 @@ RAW_PATH=$(realpath "$RAW_PATH")
 # 1.2 參考基因組配置
 source ~/.bashrc
 MAPFILE=()
-while IFS= read -r varname; do [[ $varname == Ref* ]] && MAPFILE+=("$varname"); done < <(env | cut -d= -f1 | grep '^Ref')
+MAPVAL=()
+
+# 方案一：過濾環境變數中以 .fa, .fasta, .fna 結尾的路徑
+while IFS='=' read -r name value; do
+    if [[ "$value" =~ \.(fa|fasta|fna)$ ]]; then
+        MAPFILE+=("$name")
+        MAPVAL+=("$value")
+    fi
+done < <(env)
+
 echo "--- 可用的參考基因組 ---"
-for i in "${!MAPFILE[@]}"; do echo "$((i+1))) \$${MAPFILE[$i]} (${!MAPFILE[$i]})"; done
-echo "$(( ${#MAPFILE[@]} + 1 ))) 手動輸入絕對路徑"
-read -p "請選擇參考基因組 (1-$(( ${#MAPFILE[@]} + 1 ))): " REF_CHOICE
-if [ "$REF_CHOICE" -le "${#MAPFILE[@]}" ]; then
-    REF_GENOME="${!MAPFILE[$((REF_CHOICE-1))]}"
-elif [ "$REF_CHOICE" -eq "$(( ${#MAPFILE[@]} + 1 ))" ]; then
+for i in "${!MAPFILE[@]}"; do
+    echo "$((i+1))) \$${MAPFILE[$i]} (${MAPVAL[$i]})"
+done
+
+MANUAL_OPTION=$(( ${#MAPFILE[@]} + 1 ))
+echo "$MANUAL_OPTION) 手動輸入絕對路徑"
+
+read -p "請選擇參考基因組 (1-$MANUAL_OPTION): " REF_CHOICE
+
+# 驗證輸入為純數字且在選項範圍內
+if [[ "$REF_CHOICE" =~ ^[0-9]+$ ]] && [ "$REF_CHOICE" -ge 1 ] && [ "$REF_CHOICE" -le "${#MAPFILE[@]}" ]; then
+    REF_GENOME="${MAPVAL[$((REF_CHOICE-1))]}"
+elif [ "$REF_CHOICE" -eq "$MANUAL_OPTION" ]; then
     read -e -p "請輸入絕對路徑: " REF_GENOME
 else
+    echo "錯誤：無效的選擇。"
     exit 1
 fi
-[ ! -f "${REF_GENOME}.bwt" ] && { echo "建立 BWA index..."; bwa index "$REF_GENOME"; }
-[ ! -f "${REF_GENOME}.fai" ] && { echo "建立 Samtools index..."; samtools faidx "$REF_GENOME"; }
+
+# 移除潛在的引號或空白，確保路徑純淨
+REF_GENOME=$(echo "$REF_GENOME" | sed "s/['\"]//g")
+
+# 核心檔案存在檢查
+if [ -z "$REF_GENOME" ] || [ ! -f "$REF_GENOME" ]; then
+    echo "錯誤：檔案不存在於指定路徑：$REF_GENOME"
+    exit 1
+fi
+
+# 索引狀態檢查與建立
+if [ ! -f "${REF_GENOME}.bwt" ]; then
+    echo "建立 BWA index..."
+    bwa index "$REF_GENOME" || { echo "BWA index 失敗"; exit 1; }
+fi
+
+if [ ! -f "${REF_GENOME}.fai" ]; then
+    echo "建立 Samtools index..."
+    samtools faidx "$REF_GENOME" || { echo "Samtools faidx 失敗"; exit 1; }
+fi
+
+echo "使用參考基因組: $REF_GENOME"
 
 # 1.3 模式選擇
 echo "-------------------------------------------------------"
