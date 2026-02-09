@@ -1,8 +1,6 @@
 #!/bin/bash
 # ==============================================================================
 # MIG Analysis Full Pipeline - Smart Hybrid Mode (v8.12)
-# 核心原則：絕對禁止更動黃金版本的 R code、統計參數、選單結構與文字顯示。
-# 修改內容：僅將檔案輸出導向至 00_Logs ~ 05_SNP_Calling 分類資料夾。
 # ==============================================================================
 source ~/.bashrc
 
@@ -94,7 +92,7 @@ ask_to_run() {
 # ------------------------------------------------------------------------------
 # 1. 優先參數輸入與流程選擇
 # ------------------------------------------------------------------------------
-# 1.1 專案基本資訊
+# 1.1 基本資訊
 # ==============================================================================
 #   MIG-seq Genomic Analysis Pipeline 2026
 #   Biodiversity Research Center, Academia Sinica
@@ -126,7 +124,7 @@ source ~/.bashrc
 MAPFILE=()
 MAPVAL=()
 
-# 方案一：過濾環境變數中以 .fa, .fasta, .fna 結尾的路徑
+# 過濾環境變數中以 .fa, .fasta, .fna 結尾的路徑
 while IFS='=' read -r name value; do
     if [[ "$value" =~ \.(fa|fasta|fna)$ ]]; then
         MAPFILE+=("$name")
@@ -196,13 +194,13 @@ fi
 # 1.4 階段選擇 (模組化重構版本)
 echo "-------------------------------------------------------"
 echo "分析流程選擇 (Stage Selector):"
-echo "1) 執行完整流程 (Stage 1-6)"
+echo "1) 執行完整分析 (Stage 1-6)"
 echo "2) 僅執行序列清理與比對參考基因組 (1. Trimming & 2. Alignment)"
-echo "3) 執行問題樣本過濾分析 (3. PCA Outlier & 4. Clone Filtering)"
-echo "4) 僅執行 LD Pruning (5. 產生非連鎖不平衡位點表)"
-echo "5) 執行最終 SNP Calling (6. 基於現有位點表進行 call set)"
+echo "3) 僅執行潛在問題樣本過濾分析 (3. PCA Outlier & 4. Clone Filtering)"
+echo "4) 僅執行 LD Pruning (產生連鎖不平衡位點表)"
+echo "5) 執行最終 SNP Calling (基於現有無LD位點進行)"
 echo "6) 自定義流程"
-read -p "請選擇運行範圍: " RUN_CHOICE
+read -p "選擇運行範圍: " RUN_CHOICE
 
 case "$RUN_CHOICE" in
     1) RUN_S1=y; RUN_S2=y; RUN_S3=y; RUN_S4=y; RUN_S5=y; RUN_S6=y ;;
@@ -263,7 +261,7 @@ if [[ "$RUN_S1" == "y" ]]; then
         echo "[Stage 1 完成回報]"
         echo "處理樣本總數: $N_TRIM"
         echo "清理後的檔案目錄: $STAGE1/trim/"
-        echo "Fastp 視覺化報告目錄: $STAGE1/fastp_report/"
+        echo "Fastp報告目錄: $STAGE1/fastp_report/"
         echo "-------------------------------------------------------"
 
     fi
@@ -300,7 +298,7 @@ if [[ "$RUN_S2" == "y" ]]; then
 fi
 
 # ------------------------------------------------------------------------------
-# 6. Stage 3: 生成 Mapping Summary 與 PCA 篩選 (黃金代碼對接區)
+# 6. Stage 3: 生成 Mapping Summary 與 PCA 篩選
 # ------------------------------------------------------------------------------
 if [[ "$RUN_S3" == "y" ]]; then
     echo "[5/8] 生成比對報表與 PCA 品質檢測..."
@@ -321,7 +319,7 @@ if [[ "$RUN_S3" == "y" ]]; then
             echo "[!] 未發現過濾後清單，假設上次選擇保留所有樣本 (或無 Outlier)。"
         fi
     else
-        # --- 原本的 PCA 流程 ---
+        # --- PCA 流程 ---
         echo "Sample,Total,Mapped,Properly_Paired,With_Mate_Mapped,Singletons,Mate_Diff_Chr,Mate_Diff_Chr_MapQ5,Secondary,Supplementary,Duplicates,Paired_in_Seq,Read1,Read2" > "$SUMMARY_CSV"
 
         for f in "$STAGE2/mapping_results"/*.txt; do
@@ -351,7 +349,7 @@ if [[ "$RUN_S3" == "y" ]]; then
 
 
 
-# --- PCA R 腳本 (增強統計資訊與向量顯示版) ---
+# --- PCA R 腳本 ---
         PCA_SCRIPT="$STAGE3/${PROJECT_NAME}_PCA.r"
         cat << R_CODE > "$PCA_SCRIPT"
 # --- R Package Check & Auto-install ---
@@ -458,7 +456,7 @@ R_CODE
         N_DIFF=$((N_ORIG - N_AFTER))
 
         echo "-------------------------------------------------------"
-        echo "[品質控管結果摘要]"
+        echo "[Mapping Outlier偵測結果]"
         echo "原始輸入樣本總數: $N_ORIG"
         echo "PCA 檢測建議保留樣本數: $N_AFTER"
         echo "被剔除的樣本數: $N_DIFF"
@@ -477,19 +475,19 @@ R_CODE
 
             if [ "$PCA_DECISION" == "1" ]; then
                 BAM_LIST="$STAGE3/${PROJECT_NAME}_after_pca.bamfile"
-                echo "[!] 已套用過濾後的 BAM 清單，當前分析規模: $(wc -l < "$BAM_LIST") 個樣本。"
+                echo "[!] 已套用過濾後的 BAM 清單，當前分析為: $(wc -l < "$BAM_LIST") 個樣本。"
             else
-                echo "[+] 已選擇保留離群樣本，維持原始分析規模。"
+                echo "[+] 已選擇保留outlier樣本，維持原始分析樣本數。"
             fi
         fi
     fi
 fi
 
 # ------------------------------------------------------------------------------
-# 7. 執行 Clone 偵測 (黃金代碼對接區)
+# 7. 執行 Clone 偵測 
 # ------------------------------------------------------------------------------
 if [[ "$RUN_S4" == "y" ]]; then
-    # 若上一動沒跑 S3，則需要確保有基礎的 BAM LIST，路徑對接至 Stage 3 的產出
+    # 若上一步沒跑 S3，則需要確保有基礎的 BAM LIST，路徑對接至 Stage 3 的產出
     [ -z "$BAM_LIST" ] && BAM_LIST="$STAGE3/${PROJECT_NAME}_bwa_mapped.bamfile"
 
     echo "[6/8] 執行 Clone 偵測分析 (ANGSD IBS)..."
@@ -506,12 +504,13 @@ if [[ "$RUN_S4" == "y" ]]; then
             echo "[!] 未發現過濾後清單，假設上次選擇保留 Clone 或無 Clone。"
         fi
     else
-        # --- 原本的 Clone 流程：參數與邏輯維持黃金版本 ---
+        # --- 原本的 Clone 流程 ---
         N_IND_TMP=$(wc -l < "$BAM_LIST")
         # 設定最小樣本覆蓋門檻，此處維持 70% 樣本數 
         MIN_IND_TMP=$(echo "$N_IND_TMP * 0.7 / 1" | bc)
 
         # 使用 ANGSD 計算 IBS (Identity by State) 矩陣，用於評估樣本遺傳一致性
+        echo "使用 ANGSD 計算 IBS (Identity by State) 矩陣，用於評估樣本遺傳一致性"
         angsd -bam "$BAM_LIST" -GL 1 -P 1 -uniqueOnly 1 -remove_bads 1 -minMapQ 20 -minQ 30 -minInd "$MIN_IND_TMP" \
               -snp_pval 1e-5 -minMaf 0.05 -doMajorMinor 1 -doMaf 1 -doCounts 1 -makeMatrix 1 \
               -doIBS 1 -doCov 1 -doGeno 32 -doPost 1 -doGlf 2 -out "$STAGE4/${PROJECT_NAME}_clone_identification"
@@ -622,7 +621,7 @@ R_CODE
 
             if [ "$CLONE_DECISION" == "1" ]; then
                 BAM_LIST="$STAGE4/${PROJECT_NAME}_after_clones.bamfile"
-                echo "[!] 已套用去重後的最終 BAM 清單，當前分析樣本數: $(wc -l < "$BAM_LIST") 個樣本。"
+                echo "[!] 已套用去除clones後的最終 BAM 清單，當前分析樣本數: $(wc -l < "$BAM_LIST") 個樣本。"
             else
                 echo "[+] 已選擇保留Clone樣本，維持樣本數: $N_CLONE_BEFORE"
             fi
@@ -660,20 +659,20 @@ if [[ "$RUN_S5" == "y" || "$RUN_S6" == "y" ]]; then
         mapfile -t FOUND_LISTS < <(find . -maxdepth 3 -name "*.bamfile" | sort)
         
         if [ ${#FOUND_LISTS[@]} -eq 0 ]; then
-            echo "[警告] 未在專案目錄中偵測到任何 .bamfile。"
+            echo "警告:未在專案目錄中偵測到任何 .bamfile。"
             read -e -p "請手動輸入自訂清單的完整路徑: " BAM_LIST < /dev/tty
         else
             echo "偵測到以下樣本清單，請選擇欲使用的檔案："
             for i in "${!FOUND_LISTS[@]}"; do
                 # 標註哪些是腳本預設產出的檔案，方便識別
                 note=""
-                [[ "${FOUND_LISTS[$i]}" == *"$LIST_FINAL" ]] && note="(預設清理過outlier與clone的清單)"
-                [[ "${FOUND_LISTS[$i]}" == *"$LIST_PCA_ONLY" ]] && note="(預設 PCA outlier 過濾清單)"
-                [[ "${FOUND_LISTS[$i]}" == *"$LIST_FULL" ]] && note="(預設無清理過outlier與clone清單)"
+                [[ "${FOUND_LISTS[$i]}" == *"$LIST_FINAL" ]] && note="(清理過PCA Outlier與Clone的清單)"
+                [[ "${FOUND_LISTS[$i]}" == *"$LIST_PCA_ONLY" ]] && note="(僅經過 PCA outlier 過濾清單)"
+                [[ "${FOUND_LISTS[$i]}" == *"$LIST_FULL" ]] && note="(預設什麼都沒清理的清單)"
                 
                 printf "%2d) %s %s\n" "$((i+1))" "${FOUND_LISTS[$i]}" "$note"
             done
-            echo " q) 手動輸入其他路徑"
+            echo " q) 手動輸入其他路徑(副檔名必須為bamfile)"
             
             read -p "請輸入選項 (1-${#FOUND_LISTS[@]} 或 q): " FILE_CHOICE < /dev/tty
             
@@ -694,18 +693,19 @@ if [[ "$RUN_S5" == "y" || "$RUN_S6" == "y" ]]; then
     # 根據選定的清單內容，動態更新樣本總數與 70% 門檻 (MIN_IND)
     N_IND=$(wc -l < "$BAM_LIST")
     MIN_IND=$(echo "$N_IND * 0.7 / 1" | bc)
-    echo "[確認] 當前分析清單：$BAM_LIST"
-    echo "[確認] 樣本總數：$N_IND，SNP Calling 門檻 (70%)：$MIN_IND"
+    echo "當前分析清單：$BAM_LIST"
+    echo "樣本總數：$N_IND，SNP Calling 門檻 (70%)：$MIN_IND"
 fi
 
 
 # --- [Stage 5: LD Pruning & Site Map Generation] ---
 if [[ "$RUN_S5" == "y" ]]; then
-    echo "[7/8] 執行 LD Pruning 產生非連鎖不平衡位點表..."
+    echo "[7/8] 執行 LD Pruning 產生連鎖不平衡位點表..."
     ask_to_run "LD Pruning (Site Map)" "$STAGE5/LDpruned_snp.sites" SKIP_S5
     
     if [[ "$SKIP_S5" != true ]]; then
         # 執行初步 SNP Calling 以獲取全位點資訊
+        echo "執行初步 SNP Calling 以獲取全位點資訊"
         angsd -b "$BAM_LIST" -GL 1 -uniqueOnly 1 -remove_bads 1 -minMapQ 30 -baq 1 -setMinDepth 5 -SNP_pval 1e-6 -skipTriallelic 1 -doHWE 1 -Hetbias_pval 0.00001 -minInd "$MIN_IND" -doMajorMinor 1 -doMaf 1 -dosnpstat 1 -doPost 2 -doGeno 32 -doCounts 1 -ref "$REF_GENOME" -P 1 -out "$STAGE5/allsnps"
         
         gzip -kfd "$STAGE5"/*.gz
@@ -713,12 +713,15 @@ if [[ "$RUN_S5" == "y" ]]; then
         N_SITES=$(wc -l < "$STAGE5/mc1.sites")
         
         # 計算 LD 矩陣與執行位點修剪 (Pruning)
+        echo "# 計算 LD 矩陣"
         ngsLD --geno "$STAGE5/allsnps.geno" --verbose 1 --probs 1 --n_ind "$N_IND" --n_sites "$N_SITES" --max_kb_dist 50 --pos "$STAGE5/mc1.sites" --n_threads "$THREADS" --extend_out 1 --out "$STAGE5/allsnpsites.LD"
-        
+        echo "# 執行位點修剪 (Pruning)"
         prune_graph --header -v -n "$THREADS" --in "$STAGE5/allsnpsites.LD" --weight-field "r2" --weight-filter "dist <=10000 && r2 >= 0.5" --out "$STAGE5/allsnpsites.pos"
         
         # 轉換格式並建立索引
+        echo "# 轉換LD pruned檔案格式給angsd並建立索引"
         sed 's/:/\t/g' "$STAGE5/allsnpsites.pos" | awk '$2!=""' | sort -k1 > "$STAGE5/LDpruned_snp.sites"
+        echo "# angsd建立無LD的loci索引"
         angsd sites index "$STAGE5/LDpruned_snp.sites"
         
         echo "[完成] LD Pruned Site Map 已產出: $STAGE5/LDpruned_snp.sites"
@@ -747,14 +750,16 @@ if [[ "$RUN_S6" == "y" ]]; then
     
     if [[ "$SKIP_S6" != true ]]; then
         # 套用 LD-pruned sites 進行高精準度 SNP Calling
+        echo "# 套用 LD-pruned sites 進行高精準度 SNP Calling"
         angsd -sites "$STAGE5/LDpruned_snp.sites" -b "$BAM_LIST" -GL 1 -P 1 -minInd "$MIN_IND" -minMapQ 20 -minQ 25 -sb_pval 1e-5 -Hetbias_pval 1e-5 -skipTriallelic 1 -snp_pval 1e-5 -minMaf 0.05 -doMajorMinor 1 -doMaf 1 -doCounts 1 -doGlf 2 -dosnpstat 1 -doPost 1 -doGeno 8 -doBcf 1 --ignore-RG 0 -doHWE 1 -ref "$REF_GENOME" -out "$STAGE5/${PROJECT_NAME}_snps_final"
         
+        echo "# 轉換 BCF 為 VCF"
         # 轉換 BCF 為 VCF
         bcftools view -O v -o "$STAGE5/${PROJECT_NAME}_snps_final.vcf" "$STAGE5/${PROJECT_NAME}_snps_final.bcf"
         
         FINAL_SNPS=$(bcftools view -H "$STAGE5/${PROJECT_NAME}_snps_final.vcf" | wc -l)
         echo "-------------------------------------------------------"
-        echo "[Stage 6 完成回報]"
+        echo "[Stage 6 完成]"
         echo "最終產出的 SNP 總數量: $FINAL_SNPS"
         echo "最終 VCF 檔案路徑: $STAGE5/${PROJECT_NAME}_snps_final.vcf"
         echo "-------------------------------------------------------"
@@ -765,4 +770,5 @@ echo "======================================================="
 echo "分析結束: $(date)"
 echo "產出 VCF: $STAGE5/${PROJECT_NAME}_snps_final.vcf"
 echo "日誌位置: $LOG_FILE"
+echo "請檢查Log檔案是否有潛在分析問題"
 echo "======================================================="
