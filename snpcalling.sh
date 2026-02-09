@@ -29,7 +29,28 @@ ask_to_run() {
 # 1. 優先參數輸入與流程選擇
 # ------------------------------------------------------------------------------
 # 1.1 專案基本資訊
-read -p "請輸入專案名稱(分析產生的檔案都將以專案名稱為開頭,不要有特殊字元) " PROJECT_NAME
+# ==============================================================================
+#   MIG-seq Genomic Analysis Pipeline 2026
+#   Biodiversity Research Center, Academia Sinica
+# ==============================================================================
+echo "======================================================="
+echo "   MIG-seq Genomic Analysis Pipeline (Refgenome mapping)"
+echo "   開發者：Savanna Chow. 本專案使用 Gemini 協助開發"
+echo "   Credit: AllenChen's lab, Biodiversity Research Center, Academia Sinica"
+echo "   savanna201@gmai.com"
+echo "======================================================="
+echo "此腳本依序執行以下六個核心分析階段："
+echo "  1. 序列修剪 (Fastp Trimming)"
+echo "  2. 基因組比對 (BWA Alignment)"
+echo "  3. 樣本品質過濾 (PCA Outlier Filtering)"
+echo "  4. 複本樣本鑑定 (Clone Identification)"
+echo "  5. 連鎖不平衡過濾 (LD Pruning & Site Map Generation)"
+echo "  6. 最終變異位點標定 (Final SNP Calling & VCF Output)"
+echo "-------------------------------------------------------"
+echo "[系統規範]：路徑與檔案名稱嚴禁空格或特殊字元。"
+echo "[環境檢查]：請確保執行目錄具備寫入權限，且軟體環境已正確配置。"
+echo "======================================================="
+read -p "請輸入專案名稱(分析產生的檔案都將以專案名稱為開頭,不要有特殊或空白字元) " PROJECT_NAME
 read -e -p "請輸入原始序列 (raw data) 資料夾路徑: " RAW_PATH
 [ ! -d "$RAW_PATH" ] && { echo "錯誤：找不到路徑 $RAW_PATH"; exit 1; }
 RAW_PATH=$(realpath "$RAW_PATH")
