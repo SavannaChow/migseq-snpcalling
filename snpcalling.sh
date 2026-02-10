@@ -608,39 +608,63 @@ colnames(bams) <- c("FilePath")
 bams\$Sample <- gsub(".bam$", "", basename(bams\$FilePath))
 dimnames(ma) <- list(bams\$Sample, bams\$Sample)
 
-# 2. 執行層次聚類 (Hierarchical Clustering)
-# 使用平均連鎖法 (Average Linkage) 計算樣本間的親緣關係
-hc <- hclust(as.dist(ma), "ave")
+# 2. 統計分析：決定 Clone 判定門檻 (Threshold Determination)
+# 改用成對距離分佈密度分析 (Pairwise Distance Density Analysis)
+# 邏輯：Clone 的遺傳距離應極小 (接近0)，與一般個體間的距離會形成雙峰分佈。
+# 我們尋找這兩個峰之間的低谷 (Valley) 作為截斷點。
+
+D <- as.dist(ma)
+dist_vals <- as.vector(D)
+
+# 僅聚焦於較小的距離範圍 (例如 < 0.2) 進行密度估計，以提高解析度
+low_dists <- dist_vals[dist_vals < 0.2]
+
+# 預設門檻 (若無法統計判定時的保守值)
+threshold_h <- 0.05
+
+if (length(low_dists) > 10) {
+  # 計算密度曲線
+  dens <- density(low_dists, adjust = 0.8, n = 512)
+  
+  # 尋找波峰 (Peaks) 與 波谷 (Valleys)
+  # diff(sign(diff(y))) == -2 為峰, == 2 為谷
+  dy <- diff(dens\$y)
+  changes <- diff(sign(dy))
+  
+  peaks_idx <- which(changes == -2) + 1
+  valleys_idx <- which(changes == 2) + 1
+  
+  # 檢查是否存在接近 0 的 Clone Peak (例如 < 0.05)
+  clone_peaks <- peaks_idx[dens\$x[peaks_idx] < 0.05 & dens\$x[peaks_idx] >= 0]
+  
+  if (length(clone_peaks) > 0) {
+    # 若有 Clone Peak，尋找其後的第一個 Valley
+    first_peak <- clone_peaks[1]
+    subsequent_valleys <- valleys_idx[valleys_idx > first_peak]
+    
+    if (length(subsequent_valleys) > 0) {
+      # 找到低谷，設為門檻
+      threshold_h <- dens\$x[subsequent_valleys[1]]
+    }
+  }
+}
+
+# 安全邊界約束 (Safety Constraints): 避免門檻過大或過小
+threshold_h <- max(0.01, min(threshold_h, 0.15))
+
+# 3. 執行分群 (Clustering)
+# 使用 Single Linkage (Nearest Neighbor)，符合 Clone 的傳遞性定義 (A=B, B=C -> A=C)
+hc <- hclust(D, method = "single")
+clusters <- cutree(hc, h = threshold_h)
 
 # 根據樣本數量動態調整 PDF 寬度
 dynamic_width <- max(12, nrow(bams) * 0.2)
 
 # 輸出原始聚類圖，不含任何門檻標記
 pdf("${ABS_STAGE4}/${PROJECT_NAME}_Clone_Dendrogram_RAW.pdf", width = dynamic_width, height = 10)
-plot(hc, cex=0.7, main="Raw Clustering of Samples (IBS Distance)")
+plot(hc, cex=0.7, main="Clustering of Samples (Single Linkage)")
 dev.off()
 
-# 統計跳躍點偵測邏輯：自動判定潛在的 Clone 門檻
-h <- hc\$height
-gaps <- diff(h) # 計算分支高度間的間隙
-
-# 定義背景雜訊區域 (取前 5 個分支高度作為底噪參考)
-ref_idx <- 1:min(5, length(gaps))
-noise_mean <- mean(gaps[ref_idx])
-noise_sd <- sd(gaps[ref_idx])
-
-# 尋找第一個顯著超過背景雜訊 (3倍標準差) 的跳躍點
-jump_idx <- which(gaps > (noise_mean + 3 * noise_sd))[1]
-
-# 判斷分支邏輯：若偵測到早期顯著跳躍點則作為門檻，否則使用物理約束區間
-if (!is.na(jump_idx) && jump_idx <= 10) {
-  threshold_h <- (h[jump_idx] + h[jump_idx + 1]) / 2
-} else {
-  threshold_h <- max(0.05, min(h[1] * 1.2, 0.2))
-}
-
-# 3. 執行樣本分群並建立結果表格
-clusters <- cutree(hc, h = threshold_h)
 df_clusters <- data.frame(Sample = bams\$Sample, FilePath = bams\$FilePath, ClusterID = clusters)
 
 # 識別包含複本樣本的群組 (一個 ClusterID 中若有多個樣本則視為互為 Clone)
@@ -661,12 +685,12 @@ write.table(df_clusters[!duplicated(df_clusters\$ClusterID), "FilePath"],
 
 # 4. 繪製帶有判定門檻（紅線）的診斷圖
 pdf("${ABS_STAGE4}/${PROJECT_NAME}_Clone_Dendrogram_Filtered.pdf", width = dynamic_width, height = 10)
-plot(hc, cex=0.7, main=paste("Expert-Logic Gap Detection (h =", round(threshold_h, 4), ")"))
+plot(hc, cex=0.7, main=paste("Density-based Valley Detection (h =", round(threshold_h, 4), ")"))
 abline(h = threshold_h, col = "red", lty = 2, lwd = 2) 
 dev.off()
 
 # 輸出統計診斷數值至終端機
-cat(paste("[R] 統計診斷：底噪高度", round(h[1], 4), "| 自動門檻", round(threshold_h, 4), "\n"))
+cat(paste("[R] 統計診斷：自動判定門檻 (Density Valley)", round(threshold_h, 4), "\n"))
 R_CODE
 
         Rscript "$STAGE4/${PROJECT_NAME}_identify_clones.r"
