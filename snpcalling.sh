@@ -620,21 +620,31 @@ pdf("${ABS_STAGE4}/${PROJECT_NAME}_Clone_Dendrogram_RAW.pdf", width = dynamic_wi
 plot(hc, cex=0.7, main="Raw Clustering of Samples (IBS Distance)")
 dev.off()
 
-# 統計跳躍點偵測邏輯：自動判定潛在的 Clone 門檻
+# 統計跳躍點偵測邏輯：在早期分支中尋找最大的跳躍點
 h <- hc\$height
 gaps <- diff(h) # 計算分支高度間的間隙
 
-# 定義背景雜訊區域 (取前 5 個分支高度作為底噪參考)
-ref_idx <- 1:min(5, length(gaps))
-noise_mean <- mean(gaps[ref_idx])
-noise_sd <- sd(gaps[ref_idx])
+# 定義一個合理的「早期」搜尋範圍，例如前 15 個合併點。
+# 這個數字可以根據樣本總數調整，但 15 對於大多數情況是個不錯的起點。
+# 我們只在有足夠多的分支時才進行搜索。
+search_limit <- min(15, length(gaps))
+early_search_range <- 1:search_limit
 
-# 尋找第一個顯著超過背景雜訊 (3倍標準差) 的跳躍點
-jump_idx <- which(gaps > (noise_mean + 3 * noise_sd))[1]
+# 在這個範圍內，找到最大間隙的位置
+# which.max 會回傳最大值的第一個索引。如果範圍為空，則不執行。
+if (search_limit > 0) {
+    max_gap_idx <- early_search_range[which.max(gaps[early_search_range])]
+    
+    # 檢查這個最大間隙是否比該區域的平均間隙大很多（例如3倍），以確保其顯著性
+    early_mean_gap <- mean(gaps[early_search_range])
+    is_significant_jump <- !is.na(max_gap_idx) && (gaps[max_gap_idx] > early_mean_gap * 3)
+} else {
+    is_significant_jump <- FALSE
+}
 
-# 判斷分支邏輯：若偵測到早期顯著跳躍點則作為門檻，否則使用物理約束區間
-if (!is.na(jump_idx) && jump_idx <= 10) {
-  threshold_h <- (h[jump_idx] + h[jump_idx + 1]) / 2
+# 如果找到了顯著的最大跳躍點，就用它作為門檻
+if (is_significant_jump) {
+  threshold_h <- (h[max_gap_idx] + h[max_gap_idx + 1]) / 2
 } else {
   threshold_h <- max(0.05, min(h[1] * 1.2, 0.2))
 }
