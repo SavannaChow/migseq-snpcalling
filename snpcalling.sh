@@ -97,12 +97,13 @@ ask_to_run() {
 #   MIG-seq Genomic Analysis Pipeline 2026
 #   Biodiversity Research Center, Academia Sinica
 # ==============================================================================
-echo "======================================================="
+clear
+echo "==========================================================================="
 echo "   MIG-seq Genomic Analysis Pipeline (Refgenome mapping)"
 echo "   開發者：Savanna Chow (savanna201@gmail.com) 使用 Gemini 協助開發"
 echo "   分析邏輯基於 https://github.com/jamesfifer/JapanRE"
 echo "   Credit: AllenChen's lab, Biodiversity Research Center, Academia Sinica"
-echo "======================================================="
+echo "==========================================================================="
 echo "此Script會執行以下六個分析："
 echo "  序列修剪 (Fastp Trimming)"
 echo "  基因組比對 (BWA Alignment)"
@@ -111,7 +112,7 @@ echo "  複本樣本鑑定 (Clone Identification)"
 echo "  連鎖不平衡過濾 (LD Pruning & Site Map Generation)"
 echo "  最終變異位點標定 (Final SNP Calling & VCF Output)"
 echo "**僅在Ubuntu測試過。路徑與檔案名稱嚴禁空格或特殊字元**"
-echo "======================================================="
+echo "============================================================================"
 echo "                                                       "
 echo "                                                       "
 read -p "請輸入專案名稱(分析產生的檔案都將以專案名稱為開頭,不要有特殊或空白字元) " PROJECT_NAME
