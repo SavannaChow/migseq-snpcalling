@@ -258,6 +258,7 @@ echo ""
 # 2.5 執行前最終確認 (Final Confirmation)
 # ------------------------------------------------------------------------------
 # 轉換模式與流程的顯示字串
+clear
 [[ "$RUN_MODE" == "1" ]] && MODE_STR="自動模式 (Auto)" || MODE_STR="互動模式 (Manual)"
 
 case "$RUN_CHOICE" in
