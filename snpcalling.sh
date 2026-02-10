@@ -103,17 +103,17 @@ echo "   開發者：Savanna Chow. 本專案使用 Gemini 協助開發"
 echo "   Credit: AllenChen's lab, Biodiversity Research Center, Academia Sinica"
 echo "   savanna201@gmai.com"
 echo "======================================================="
-echo "此腳本依序執行以下六個核心分析階段："
-echo "  1. 序列修剪 (Fastp Trimming)"
-echo "  2. 基因組比對 (BWA Alignment)"
-echo "  3. 樣本品質過濾 (PCA Outlier Filtering)"
-echo "  4. 複本樣本鑑定 (Clone Identification)"
-echo "  5. 連鎖不平衡過濾 (LD Pruning & Site Map Generation)"
-echo "  6. 最終變異位點標定 (Final SNP Calling & VCF Output)"
-echo "-------------------------------------------------------"
-echo "[系統規範]：路徑與檔案名稱嚴禁空格或特殊字元。"
-echo "[環境檢查]：請確保執行目錄具備寫入權限，且軟體環境已正確配置。"
+echo "此Script會執行以下六個分析："
+echo "  序列修剪 (Fastp Trimming)"
+echo "  基因組比對 (BWA Alignment)"
+echo "  樣本品質過濾 (PCA Outlier Filtering)"
+echo "  複本樣本鑑定 (Clone Identification)"
+echo "  連鎖不平衡過濾 (LD Pruning & Site Map Generation)"
+echo "  最終變異位點標定 (Final SNP Calling & VCF Output)"
+echo "**僅在Ubuntu測試運行。路徑與檔案名稱嚴禁空格或特殊字元**"
 echo "======================================================="
+echo "                                                       "
+echo "                                                       "
 read -p "請輸入專案名稱(分析產生的檔案都將以專案名稱為開頭,不要有特殊或空白字元) " PROJECT_NAME
 read -e -p "請輸入原始序列 (raw data) 資料夾路徑: " RAW_PATH
 [ ! -d "$RAW_PATH" ] && { echo "錯誤：找不到路徑 $RAW_PATH"; exit 1; }
@@ -361,6 +361,10 @@ new_packages <- required_packages[!(required_packages %in% installed.packages()[
 if(length(new_packages)) install.packages(new_packages, repos='https://cran.csie.ntu.edu.tw/')
 lapply(required_packages, library, character.only = TRUE)
 
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(ggrepel)
 # 1. 讀取數據 (使用絕對路徑)
 df <- read_csv("${ABS_SUMMARY_CSV}", show_col_types = FALSE)
 original_bams <- read.table("${ABS_BAM_LIST}", header = FALSE, stringsAsFactors = FALSE)
@@ -413,18 +417,22 @@ cutoff <- qf(0.95, p_vars, n - 1) * (p_vars * (n - 1) / (n - p_vars))
 scores\$dist_sq <- mahalanobis(scores[, 1:2], center = colMeans(scores[, 1:2]), cov = cov(scores[, 1:2]))
 scores\$is_outlier <- scores\$dist_sq > cutoff
 
-# 4. 繪製 PDF (絕對路徑)
+# 4. 繪製 PDF (包含數據點、橢圓與特徵向量)
+# 計算向量縮放比例以適應數據分布
 scaling_factor <- max(abs(scores[, 1:2])) / max(abs(loadings[, 1:2])) * 0.8
-
+# 繪製 PDF
 p <- ggplot() +
+# 繪製樣本點與橢圓
   stat_ellipse(data = scores, aes(x = PC1, y = PC2), type = "norm", level = 0.95, linetype = "dashed", color = "darkgreen") +
   geom_point(data = scores, aes(x = PC1, y = PC2, color = is_outlier), size = 2.6) +
   scale_color_manual(values = c("FALSE" = "black", "TRUE" = "red")) +
   geom_text_repel(data = subset(scores, is_outlier), aes(x = PC1, y = PC2, label = Sample), color = "red") +
+# 繪製特徵向量 (特徵向量方向)
   geom_segment(data = loadings, aes(x = 0, y = 0, xend = PC1 * scaling_factor, yend = PC2 * scaling_factor),
                arrow = arrow(length = unit(0.2, "cm")), color = "blue", alpha = 0.7) +
   geom_text(data = loadings, aes(x = PC1 * scaling_factor * 1.1, y = PC2 * scaling_factor * 1.1, label = Variable),
             color = "blue", fontface = "bold") +
+# 標籤加上貢獻率
   labs(title = paste0(df_pca\$Sample[1], "... PCA Analysis"),
        x = paste0("PC1 (", round(prop_var[1]*100, 1), "%)"),
        y = paste0("PC2 (", round(prop_var[2]*100, 1), "%)")) +
@@ -437,7 +445,7 @@ valid_samples <- scores\$Sample[!scores\$is_outlier]
 write.table(scores\$Sample[scores\$is_outlier], "${ABS_STAGE3}/${PROJECT_NAME}_outliers.txt", quote = FALSE, row.names = FALSE, col.names = FALSE)
 to_keep_bams <- original_bams %>% filter(Sample %in% valid_samples) %>% select(FilePath)
 write.table(to_keep_bams, "${ABS_STAGE3}/${PROJECT_NAME}_after_pca.bamfile", quote = FALSE, row.names = FALSE, col.names = FALSE)
-
+# 於 Terminal 輸出簡單統計摘要
 cat("\n[PCA 統計摘要]\n")
 print(pca_stat)
 R_CODE
