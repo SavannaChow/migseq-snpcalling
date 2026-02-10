@@ -498,7 +498,7 @@ if [[ "$RUN_S4" == "y" ]]; then
 
     if [ "$SKIP_CLONE_CALC" = true ]; then
         echo ">>> 跳過 Clone 計算，嘗試載入先前的去重結果..."
-        # 檢查是否存在去重後的 BAM 清單，若有則直接讀取
+        # 檢查是否存在去clone後的 BAM 清單，若有則直接讀取
         if [ -f "$STAGE4/${PROJECT_NAME}_after_clones.bamfile" ]; then
             BAM_LIST="$STAGE4/${PROJECT_NAME}_after_clones.bamfile"
             echo "[!] 載入既有的 Clone 去重後清單: $(wc -l < "$BAM_LIST") 個樣本"
@@ -512,42 +512,51 @@ if [[ "$RUN_S4" == "y" ]]; then
         MIN_IND_TMP=$(echo "$N_IND_TMP * 0.7 / 1" | bc)
 
         # 使用 ANGSD 計算 IBS (Identity by State) 矩陣，用於評估樣本遺傳一致性
-        echo "使用 ANGSD 計算 IBS (Identity by State) 矩陣，用於評估樣本遺傳一致性"
+        echo "使用 ANGSD 計算 IBS (Identity by State) 矩陣"
         angsd -bam "$BAM_LIST" -GL 1 -P 1 -uniqueOnly 1 -remove_bads 1 -minMapQ 20 -minQ 30 -minInd "$MIN_IND_TMP" \
               -snp_pval 1e-5 -minMaf 0.05 -doMajorMinor 1 -doMaf 1 -doCounts 1 -makeMatrix 1 \
               -doIBS 1 -doCov 1 -doGeno 32 -doPost 1 -doGlf 2 -out "$STAGE4/${PROJECT_NAME}_clone_identification"
 
         # 解壓 ANGSD 產出的中間檔以供 R 讀取
         gzip -kfd "$STAGE4"/*.gz 2>/dev/null || true
-
-        # --- Clone R 腳本：執行層次聚類與專家邏輯門檻判定 ---
+        # --- 在進入 R 前，將路徑轉換為絕對路徑以確保 RStudio 兼容性 ---
+        ABS_STAGE4=$(realpath "$STAGE4")
+        ABS_BAM_LIST=$(realpath "$BAM_LIST")
+        # --- Clone R 腳本：執行層次聚類與門檻判定 ---
         cat << R_CODE > "$STAGE4/${PROJECT_NAME}_identify_clones.r"
+# --- [自動環境檢查] 確保 RStudio 環境具備必要套件 ---
+required_packages <- c("readr", "dplyr")
+new_packages <- required_packages[!(required_packages %in% installed.packages()[,"Package"])]
+if(length(new_packages)) install.packages(new_packages, repos='https://cran.csie.ntu.edu.tw/')
+lapply(required_packages, library, character.only = TRUE)
+
 library(readr)
 library(dplyr)
-
-# 1. 讀取遺傳距離數據與樣本路徑
-ma <- as.matrix(read.table("$STAGE4/${PROJECT_NAME}_clone_identification.ibsMat"))
-bams <- read.table("$BAM_LIST", header = FALSE, stringsAsFactors = FALSE)
+# 1. 讀取遺傳距離數據與樣本路徑 (已轉換為絕對路徑)
+# ma: 從 ANGSD 產出的 .ibsMat 讀取樣本間的遺傳距離矩陣
+ma <- as.matrix(read.table("${ABS_STAGE4}/${PROJECT_NAME}_clone_identification.ibsMat"))
+bams <- read.table("${ABS_BAM_LIST}", header = FALSE, stringsAsFactors = FALSE)
 colnames(bams) <- c("FilePath")
 bams\$Sample <- gsub(".bam$", "", basename(bams\$FilePath))
 dimnames(ma) <- list(bams\$Sample, bams\$Sample)
 
 # 2. 執行層次聚類 (Hierarchical Clustering)
+# 使用平均連鎖法 (Average Linkage) 計算樣本間的親緣關係
 hc <- hclust(as.dist(ma), "ave")
 
 # 根據樣本數量動態調整 PDF 寬度
 dynamic_width <- max(12, nrow(bams) * 0.2)
 
 # 輸出原始聚類圖，不含任何門檻標記
-pdf("$STAGE4/${PROJECT_NAME}_Clone_Dendrogram_RAW.pdf", width = dynamic_width, height = 10)
+pdf("${ABS_STAGE4}/${PROJECT_NAME}_Clone_Dendrogram_RAW.pdf", width = dynamic_width, height = 10)
 plot(hc, cex=0.7, main="Raw Clustering of Samples (IBS Distance)")
 dev.off()
 
-# 統計跳躍點偵測邏輯
+# 統計跳躍點偵測邏輯：自動判定潛在的 Clone 門檻
 h <- hc\$height
 gaps <- diff(h) # 計算分支高度間的間隙
 
-# 定義背景雜訊區域 (取前 5 個分支高度)
+# 定義背景雜訊區域 (取前 5 個分支高度作為底噪參考)
 ref_idx <- 1:min(5, length(gaps))
 noise_mean <- mean(gaps[ref_idx])
 noise_sd <- sd(gaps[ref_idx])
@@ -566,7 +575,7 @@ if (!is.na(jump_idx) && jump_idx <= 10) {
 clusters <- cutree(hc, h = threshold_h)
 df_clusters <- data.frame(Sample = bams\$Sample, FilePath = bams\$FilePath, ClusterID = clusters)
 
-# 識別包含複本樣本的群組
+# 識別包含複本樣本的群組 (一個 ClusterID 中若有多個樣本則視為互為 Clone)
 clone_cluster_ids <- which(table(clusters) > 1)
 
 # 寫出建議移除的名單 (每個 Clone 群組僅保留一個代表樣本)
@@ -576,14 +585,14 @@ write.table(df_clusters %>%
               slice(-1) %>% 
               ungroup() %>% 
               select(Sample), 
-            "$STAGE4/${PROJECT_NAME}_clones_to_review.txt", quote = FALSE, row.names = FALSE, col.names = FALSE)
+            "${ABS_STAGE4}/${PROJECT_NAME}_clones_to_review.txt", quote = FALSE, row.names = FALSE, col.names = FALSE)
 
-# 寫出保留下來的樣本路徑清單
+# 寫出保留下來的樣本路徑清單 (作為後續分析用的新 BAM List)
 write.table(df_clusters[!duplicated(df_clusters\$ClusterID), "FilePath"], 
-            "$STAGE4/${PROJECT_NAME}_after_clones.bamfile", quote = FALSE, row.names = FALSE, col.names = FALSE)
+            "${ABS_STAGE4}/${PROJECT_NAME}_after_clones.bamfile", quote = FALSE, row.names = FALSE, col.names = FALSE)
 
 # 4. 繪製帶有判定門檻（紅線）的診斷圖
-pdf("$STAGE4/${PROJECT_NAME}_Clone_Dendrogram_Filtered.pdf", width = dynamic_width, height = 10)
+pdf("${ABS_STAGE4}/${PROJECT_NAME}_Clone_Dendrogram_Filtered.pdf", width = dynamic_width, height = 10)
 plot(hc, cex=0.7, main=paste("Expert-Logic Gap Detection (h =", round(threshold_h, 4), ")"))
 abline(h = threshold_h, col = "red", lty = 2, lwd = 2) 
 dev.off()
