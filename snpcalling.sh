@@ -347,24 +347,23 @@ if [[ "$RUN_S3" == "y" ]]; then
         echo "對應統計來源: $STAGE2/mapping_results/"
         echo "-------------------------------------------------------"
 
+# --- 在產生 R script 之前，先將路徑轉為絕對路徑 ---
+        ABS_STAGE3=$(realpath "$STAGE3")
+        ABS_SUMMARY_CSV=$(realpath "$SUMMARY_CSV")
+        ABS_BAM_LIST=$(realpath "$BAM_LIST")
 
-
-# --- PCA R 腳本 ---
+# --- PCA R 腳本 (增強統計資訊與向量顯示版) ---
         PCA_SCRIPT="$STAGE3/${PROJECT_NAME}_PCA.r"
         cat << R_CODE > "$PCA_SCRIPT"
-# --- R Package Check & Auto-install ---
+# --- [自動環境檢查] ---
 required_packages <- c("readr", "dplyr", "ggplot2", "ggrepel")
 new_packages <- required_packages[!(required_packages %in% installed.packages()[,"Package"])]
 if(length(new_packages)) install.packages(new_packages, repos='https://cran.csie.ntu.edu.tw/')
 lapply(required_packages, library, character.only = TRUE)
-# --------------------------------------        
-library(readr)
-library(dplyr)
-library(ggplot2)
-library(ggrepel)
 
-df <- read_csv("$SUMMARY_CSV", show_col_types = FALSE)
-original_bams <- read.table("$BAM_LIST", header = FALSE, stringsAsFactors = FALSE)
+# 1. 讀取數據 (使用絕對路徑)
+df <- read_csv("${ABS_SUMMARY_CSV}", show_col_types = FALSE)
+original_bams <- read.table("${ABS_BAM_LIST}", header = FALSE, stringsAsFactors = FALSE)
 colnames(original_bams) <- c("FilePath")
 original_bams\$Sample <- gsub(".bam$", "", basename(original_bams\$FilePath))
 
@@ -387,7 +386,7 @@ df_pca <- df %>%
 X <- df_pca %>% select(mapping_rate, pairing_efficiency, singleton_rate) %>% as.data.frame()
 pca_cor <- prcomp(X, center = TRUE, scale. = TRUE)
 
-# 1. 提取特徵統計量 (變異量、變異量百分比、累積貢獻率)
+# 提取特徵統計量
 eig_val <- pca_cor\$sdev^2
 prop_var <- eig_val / sum(eig_val)
 cum_var <- cumsum(prop_var)
@@ -399,14 +398,14 @@ pca_stat <- data.frame(
   Cumulative_Percent = cum_var * 100
 )
 
-# 輸出詳細統計表
-write.table(pca_stat, "$STAGE3/${PROJECT_NAME}_PCA_statistics.txt", sep="\t", quote=FALSE, row.names=FALSE)
+# 輸出詳細統計表 (絕對路徑)
+write.table(pca_stat, "${ABS_STAGE3}/${PROJECT_NAME}_PCA_statistics.txt", sep="\t", quote=FALSE, row.names=FALSE)
 
-# 2. 提取特徵向量 (Loadings / Eigenvectors)
+# 2. 提取特徵向量
 loadings <- as.data.frame(pca_cor\$rotation)
 loadings\$Variable <- rownames(loadings)
 
-# 3. 離群值判定 (維持原始 Mahalanobis Distance 邏輯)
+# 3. 離群值判定
 scores <- as.data.frame(pca_cor\$x[, 1:2])
 scores\$Sample <- df_pca\$Sample
 n <- nrow(scores); p_vars <- 2
@@ -414,36 +413,31 @@ cutoff <- qf(0.95, p_vars, n - 1) * (p_vars * (n - 1) / (n - p_vars))
 scores\$dist_sq <- mahalanobis(scores[, 1:2], center = colMeans(scores[, 1:2]), cov = cov(scores[, 1:2]))
 scores\$is_outlier <- scores\$dist_sq > cutoff
 
-# 4. 繪製 PDF (包含數據點、橢圓與特徵向量)
-# 計算向量縮放比例以適應數據分布
+# 4. 繪製 PDF (絕對路徑)
 scaling_factor <- max(abs(scores[, 1:2])) / max(abs(loadings[, 1:2])) * 0.8
 
 p <- ggplot() +
-  # 繪製樣本點與橢圓
   stat_ellipse(data = scores, aes(x = PC1, y = PC2), type = "norm", level = 0.95, linetype = "dashed", color = "darkgreen") +
   geom_point(data = scores, aes(x = PC1, y = PC2, color = is_outlier), size = 2.6) +
   scale_color_manual(values = c("FALSE" = "black", "TRUE" = "red")) +
   geom_text_repel(data = subset(scores, is_outlier), aes(x = PC1, y = PC2, label = Sample), color = "red") +
-  # 繪製特徵向量 (特徵向量方向)
   geom_segment(data = loadings, aes(x = 0, y = 0, xend = PC1 * scaling_factor, yend = PC2 * scaling_factor),
                arrow = arrow(length = unit(0.2, "cm")), color = "blue", alpha = 0.7) +
   geom_text(data = loadings, aes(x = PC1 * scaling_factor * 1.1, y = PC2 * scaling_factor * 1.1, label = Variable),
             color = "blue", fontface = "bold") +
-  # 標籤加上貢獻率
   labs(title = paste0(df_pca\$Sample[1], "... PCA Analysis"),
        x = paste0("PC1 (", round(prop_var[1]*100, 1), "%)"),
        y = paste0("PC2 (", round(prop_var[2]*100, 1), "%)")) +
   theme_classic()
 
-ggsave("$STAGE3/${PROJECT_NAME}_PCA_Mapping_Quality.pdf", plot = p, width = 8, height = 7)
+ggsave("${ABS_STAGE3}/${PROJECT_NAME}_PCA_Mapping_Quality.pdf", plot = p, width = 8, height = 7)
 
-# 產出過濾後的 BAM 清單 (維持原始邏輯)
+# 產出過濾後的結果 (絕對路徑)
 valid_samples <- scores\$Sample[!scores\$is_outlier]
-write.table(scores\$Sample[scores\$is_outlier], "$STAGE3/${PROJECT_NAME}_outliers.txt", quote = FALSE, row.names = FALSE, col.names = FALSE)
+write.table(scores\$Sample[scores\$is_outlier], "${ABS_STAGE3}/${PROJECT_NAME}_outliers.txt", quote = FALSE, row.names = FALSE, col.names = FALSE)
 to_keep_bams <- original_bams %>% filter(Sample %in% valid_samples) %>% select(FilePath)
-write.table(to_keep_bams, "$STAGE3/${PROJECT_NAME}_after_pca.bamfile", quote = FALSE, row.names = FALSE, col.names = FALSE)
+write.table(to_keep_bams, "${ABS_STAGE3}/${PROJECT_NAME}_after_pca.bamfile", quote = FALSE, row.names = FALSE, col.names = FALSE)
 
-# 於 Terminal 輸出簡單統計摘要
 cat("\n[PCA 統計摘要]\n")
 print(pca_stat)
 R_CODE
