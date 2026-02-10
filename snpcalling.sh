@@ -235,6 +235,9 @@ mkdir -p "$LOG_DIR" "$STAGE1/trim" "$STAGE1/fastp_report" "$STAGE2/bam" "$STAGE2
 LOG_FILE="$LOG_DIR/${PROJECT_NAME}_${CURRENT_TIME}.log"
 exec > >(tee -i "$LOG_FILE") 2>&1
 
+THREADS=$(nproc 2>/dev/null || sysctl -n hw.ncpu)
+JOBS=$(( THREADS / 4 )); [ "$JOBS" -lt 1 ] && JOBS=1
+
 # 2. 目錄與日誌初始化後
 echo "======================================================="
 echo "  分析配置總結"
@@ -250,8 +253,55 @@ echo "  日誌檔案   : $LOG_FILE"
 echo "======================================================="
 echo ""
 
-THREADS=$(nproc 2>/dev/null || sysctl -n hw.ncpu)
-JOBS=$(( THREADS / 4 )); [ "$JOBS" -lt 1 ] && JOBS=1
+
+# ------------------------------------------------------------------------------
+# 2.5 執行前最終確認 (Final Confirmation)
+# ------------------------------------------------------------------------------
+# 轉換模式與流程的顯示字串
+[[ "$RUN_MODE" == "1" ]] && MODE_STR="自動模式 (Auto)" || MODE_STR="互動模式 (Manual)"
+
+case "$RUN_CHOICE" in
+    1) RANGE_STR="完整分析 (Stage 1-6)" ;;
+    2) RANGE_STR="序列清理與比對 (Stage 1-2)" ;;
+    3) RANGE_STR="問題樣本過濾 (Stage 3-4)" ;;
+    4) RANGE_STR="LD Pruning (Stage 5)" ;;
+    5) RANGE_STR="最終 SNP Calling (Stage 6)" ;;
+    *) RANGE_STR="自定義流程" ;;
+esac
+echo "                      執行前最終確認                      "
+echo ""
+echo "======================================================="
+echo "  分析配置總結 (Analysis Configuration Summary)"
+echo "-------------------------------------------------------"
+echo ""
+printf "  %-15s : %s\n" "專案名稱" "$PROJECT_NAME"
+printf "  %-15s : %s\n" "原始資料路徑" "$RAW_PATH"
+printf "  %-15s : %s\n" "參考基因組" "$REF_GENOME"
+printf "  %-15s : %s\n" "執行模式" "$MODE_STR"
+printf "  %-15s : %s\n" "運行範圍" "$RANGE_STR"
+
+if [ "$RUN_MODE" == "1" ]; then
+    printf "  %-15s : %s\n" "PCA Outlier 決策" "$([[ "$AUTO_PCA_CHOICE" == "1" ]] && echo "移除" || echo "保留")"
+    printf "  %-15s : %s\n" "Clone 樣本決策" "$([[ "$AUTO_CLONE_CHOICE" == "1" ]] && echo "移除" || echo "保留")"
+fi
+
+printf "  %-15s : %s (Jobs: %s)\n" "並行執行緒" "$THREADS" "$JOBS"
+printf "  %-15s : %s\n" "日誌檔案" "$LOG_FILE"
+echo ""
+echo "-------------------------------------------------------"
+read -p "  以上配置是否正確？ (y: 開始執行 / n: 結束並重新設定): " CONFIRM
+echo ""
+
+if [[ "$CONFIRM" != "y" && "$CONFIRM" != "Y" ]]; then
+    echo "  [取消] 使用者中止程式，請重新啟動腳本進行設定。"
+    # 移除剛建立但尚未使用的日誌檔案與目錄（選擇性）
+    exit 0
+fi
+
+echo "  [確認] 配置正確，啟動分析流程..."
+echo ""
+
+
 
 # ------------------------------------------------------------------------------
 # 3. 執行分析流程
