@@ -176,10 +176,12 @@ fi
 echo "使用參考基因組: $REF_GENOME"
 
 # 1.3 模式選擇
+echo ""
 echo "-------------------------------------------------------"
 echo "請選擇分析運行模式："
 echo "1) 自動模式 (預先設定篩選策略，遇到決策點不中斷)"
 echo "2) 互動模式 (各階段結束後，手動決定是否移除樣本)"
+echo ""
 read -p "請輸入選項 (1 或 2): " RUN_MODE
 
 if [ "$RUN_MODE" == "1" ]; then
@@ -191,18 +193,22 @@ if [ "$RUN_MODE" == "1" ]; then
 else
     echo "[模式選擇：互動模式]"
 fi
+echo ""
 
 # 1.4 階段選擇 (模組化重構版本)
+echo "======================================================="
+echo "  1.4 分析流程選擇 (Stage Selector)"
 echo "-------------------------------------------------------"
-echo "分析流程選擇 (Stage Selector):"
+echo ""
 echo "1) 執行完整分析 (Stage 1-6)"
-echo "2) 僅執行序列清理與比對參考基因組 (1. Trimming & 2. Alignment)"
-echo "3) 僅執行潛在問題樣本過濾分析 (3. PCA Outlier & 4. Clone Filtering)"
-echo "4) 僅執行 LD Pruning (產生連鎖不平衡位點表)"
-echo "5) 執行最終 SNP Calling (基於現有無LD位點進行)"
+echo "2) 僅執行序列清理與比對參考基因組 (Trim & Align)"
+echo "3) 僅執行潛在問題樣本過濾分析 (Outlier & Clone Filtering)"
+echo "4) 僅執行 LD Pruning (分析連鎖不平衡位點)"
+echo "5) 執行最終 SNP Calling (基於現有無LD位點)"
 echo "6) 自定義流程"
+echo ""
 read -p "選擇運行範圍: " RUN_CHOICE
-
+echo ""
 case "$RUN_CHOICE" in
     1) RUN_S1=y; RUN_S2=y; RUN_S3=y; RUN_S4=y; RUN_S5=y; RUN_S6=y ;;
     2) RUN_S1=y; RUN_S2=y; RUN_S3=n; RUN_S4=n; RUN_S5=n; RUN_S6=n ;;
@@ -229,10 +235,20 @@ mkdir -p "$LOG_DIR" "$STAGE1/trim" "$STAGE1/fastp_report" "$STAGE2/bam" "$STAGE2
 LOG_FILE="$LOG_DIR/${PROJECT_NAME}_${CURRENT_TIME}.log"
 exec > >(tee -i "$LOG_FILE") 2>&1
 
+# 2. 目錄與日誌初始化後
 echo "======================================================="
-echo "分析啟動時間: $(date)"
-echo "專案名稱: $PROJECT_NAME"
+echo "  分析配置總結"
+echo "-------------------------------------------------------"
+echo ""
+echo "  啟動時間   : $(date)"
+echo "  專案名稱   : $PROJECT_NAME"
+echo "  執行執行緒 : $THREADS (Jobs: $JOBS)"
+echo "  原始路徑   : $RAW_PATH"
+echo "  參考基因組 : $REF_GENOME"
+echo ""
+echo "  日誌檔案   : $LOG_FILE"
 echo "======================================================="
+echo ""
 
 THREADS=$(nproc 2>/dev/null || sysctl -n hw.ncpu)
 JOBS=$(( THREADS / 4 )); [ "$JOBS" -lt 1 ] && JOBS=1
