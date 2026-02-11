@@ -42,6 +42,10 @@ while true; do
 
     # 2. 執行檢索並暫存結果
     TEMP_DATA=$(mktemp)
+    
+    # 產生時間戳記與完整存檔路徑
+    TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+    HISTORY_FILE="$BASE_DIR/SearchRecord_${QUERY// /_}_${TIMESTAMP}.txt"
 
     echo "正在檢索 NCBI 資料庫並解析數據結構"
     esearch -db assembly -query "$QUERY" -retmax 5000 \
@@ -59,11 +63,11 @@ while true; do
         continue
     fi
 
-    # 3. 視覺化格式輸出
+    # 3. 視覺化格式輸出並同步存檔至 BASE_DIR
     awk -F'\t' '{
         total_mb     = $13 / 1000000
         printf "-------------------- [ Index: %-4d ] --------------------\n", NR
-        printf "ID & ACC     | %s | %s\n", $2, $1
+        printf "ID & ACC       | %s | %s\n", $2, $1
         printf "SOURCE         | Project: %s | BioSample: %s | Isolate: %s\n", $4, $11, $6
         printf "SPECS          | Status: %s | Type: %s | RefSeq: %s\n", $3, $9, $10
         printf "GENOME         | %.0f Mb (total) | %.1f Mb (ungapped)\n", total_mb, ungapped_mb
@@ -71,7 +75,9 @@ while true; do
         printf "SUBMITTER      | %s\n", $5
         printf "FTP            | %s_genomic.fna.gz\n\n", $12
 
-    }' "$TEMP_DATA"
+    }' "$TEMP_DATA" | tee "$HISTORY_FILE"
+
+    echo "搜尋結果已存檔至: $HISTORY_FILE"
 
     # 4. 互動式選擇
     read -p "選擇要下載的Genome編號 (輸入 r 重新搜尋): " INDEX
