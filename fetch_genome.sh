@@ -48,7 +48,7 @@ while true; do
     HISTORY_FILE="$BASE_DIR/SearchRecord_${QUERY// /_}_${TIMESTAMP}.txt"
 
     echo "正在檢索 NCBI 資料庫並解析數據結構"
-    esearch -db assembly -query "$QUERY" \
+    esearch -db assembly -query "\"${QUERY}\"[Assembly Accession]" \
     | esummary \
     | xtract -pattern DocumentSummary -def "NA" \
       -element AssemblyAccession AssemblyName AssemblyStatus \
@@ -63,18 +63,38 @@ while true; do
         continue
     fi
 
+# 1  AssemblyAccession
+# 2  AssemblyName
+# 3  AssemblyStatus
+# 4  BioprojectAccn
+# 5  SubmitterOrganization
+# 6  Isolate
+# 7  Coverage
+# 8  ScaffoldN50
+# 9  AssemblyType
+# 10 RefSeq_category
+# 11 BioSampleAccn
+# 12 SubmissionDate
+# 13 LastUpdateDate
+# 14 FtpPath_GenBank
+# 15 total_length
+
+
     # 3. 視覺化格式輸出並同步存檔至 BASE_DIR
     awk -F'\t' '{
-        total_mb     = $15 / 1000000
-        printf "-------------------- [ Index: %-4d ] --------------------\n", NR
-        printf "ID & ACC       | %s | %s\n", $2, $1
-        printf "SOURCE         | Project: %s | BioSample: %s | Isolate: %s\n", $4, $11, $6
-        printf "SPECS          | Status: %s | Type: %s | RefSeq: %s\n", $3, $9, $10
-        printf "GENOME         | %.0f Mb (total) | %.1f Mb (ungapped)\n", total_mb, ungapped_mb
-        printf "QUALITY        | ScaffoldN50: %s | Coverage: %s\n", $8, $7
-        printf "SUBMITTER      | %s\n", $5
-        printf "DATE           | Submitted: %s | Updated: %s\n", $12, $13
-        printf "FTP            | %s_genomic.fna.gz\n\n", $14
+  total_mb = $15 / 1000000
+
+printf "-------------------- [ Index: %-4d ] --------------------\n", NR
+
+printf "AssemblyAccession $1  | %s    AssemblyName $2  | %s    AssemblyStatus $3  | %s\n",  $1,  $2,  $3
+printf "BioprojectAccn $4     | %s    SubmitterOrg $5  | %s    Isolate $6         | %s\n",  $4,  $5,  $6
+printf "Coverage $7           | %s    ScaffoldN50 $8   | %s    AssemblyType $9    | %s\n",  $7,  $8,  $9
+printf "RefSeq_category $10   | %s    BioSampleAccn $11| %s    SubmissionDate $12 | %s\n", $10, $11, $12
+printf "LastUpdateDate $13    | %s    total_length $15 | %s\n", $13, $15
+
+printf "FtpPath_GenBank $14   | %s\n", $14
+
+printf "TOTAL_MB              | %.0f\n\n", total_mb
 
     }' "$TEMP_DATA" | tee "$HISTORY_FILE"
 
