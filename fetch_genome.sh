@@ -48,7 +48,7 @@ while true; do
     HISTORY_FILE="$BASE_DIR/SearchRecord_${QUERY// /_}_${TIMESTAMP}.txt"
 
     echo "正在檢索 NCBI 資料庫並解析數據結構"
-    esearch -db assembly -query "$QUERY" -retmax 5000 \
+    esearch -db assembly -query "$QUERY" \
     | esummary \
     | xtract -pattern DocumentSummary -def "NA" \
       -element AssemblyAccession AssemblyName AssemblyStatus \
