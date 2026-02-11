@@ -54,7 +54,7 @@ while true; do
       -element AssemblyAccession AssemblyName AssemblyStatus \
                BioprojectAccn SubmitterOrganization Isolate \
                Coverage ScaffoldN50 AssemblyType RefSeq_category BioSampleAccn \
-               FtpPath_GenBank \
+               SubmissionDate LastUpdateDate FtpPath_GenBank \
       -block Stat -if @category -equals total_length -element Stat > "$TEMP_DATA"
 
     if [ ! -s "$TEMP_DATA" ]; then
@@ -65,7 +65,7 @@ while true; do
 
     # 3. 視覺化格式輸出並同步存檔至 BASE_DIR
     awk -F'\t' '{
-        total_mb     = $13 / 1000000
+        total_mb     = $15 / 1000000
         printf "-------------------- [ Index: %-4d ] --------------------\n", NR
         printf "ID & ACC       | %s | %s\n", $2, $1
         printf "SOURCE         | Project: %s | BioSample: %s | Isolate: %s\n", $4, $11, $6
@@ -73,7 +73,8 @@ while true; do
         printf "GENOME         | %.0f Mb (total) | %.1f Mb (ungapped)\n", total_mb, ungapped_mb
         printf "QUALITY        | ScaffoldN50: %s | Coverage: %s\n", $8, $7
         printf "SUBMITTER      | %s\n", $5
-        printf "FTP            | %s_genomic.fna.gz\n\n", $12
+        printf "DATE           | Submitted: %s | Updated: %s\n", $12, $13
+        printf "FTP            | %s_genomic.fna.gz\n\n", $14
 
     }' "$TEMP_DATA" | tee "$HISTORY_FILE"
 
