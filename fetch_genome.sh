@@ -121,28 +121,41 @@ FULL_URL="${FTP_BASE}/$DOWNLOAD_FILE"
 echo "下載Genome $ACCESSION 至 $TARGET_DIR..."
 wget -c --tries=0 -P "$TARGET_DIR" "$FULL_URL"
 
-# 6. 解壓縮與建立索引
-echo "解壓縮..."
-gunzip -f "$TARGET_DIR/$DOWNLOAD_FILE"
-FNA_FILE="$TARGET_DIR/${FILE_NAME}_genomic.fna"
-ABS_PATH=$(realpath "$FNA_FILE")
-
-echo "建立索引 Building BWA index (this may take a while)..."
-bwa index "$ABS_PATH"
-
-# 7. 設定環境變數
+# 6. 設定環境變數 (移至解壓縮之前)
 echo "--------------------------------------------------"
+echo "目前系統已存在的 Reference Genome 變數:"
+grep "^export Ref_" ~/.bashrc || echo "(目前尚無設定任何 Ref_ 變數)"
+echo "--------------------------------------------------"
+
 read -p "請輸入參考基因組名稱, 不可使用空白或特殊字元 (e.g., Ahya_XXX): " USER_INPUT
 
+# 若使用者未輸入名稱則停止
+if [ -z "$USER_INPUT" ]; then
+    echo "錯誤：未輸入名稱，停止執行後續解壓縮與索引程序。"
+    exit 1
+fi
 # 自動合成變數名稱
 ENV_VAR="Ref_${USER_INPUT}"
+
+# 預先定義解壓後的絕對路徑
+FNA_FILE="$TARGET_DIR/${FILE_NAME}_genomic.fna"
+ABS_PATH=$(realpath "$FNA_FILE")
 
 # 寫入 .bashrc
 echo "export $ENV_VAR=\"$ABS_PATH\"" >> ~/.bashrc
 source ~/.bashrc
+echo "環境變數 '$ENV_VAR' 已加入 ~/.bashrc。"
+
+
+# 7. 解壓縮與建立索引 (只有在環境變數設定後才跑)
+echo "解壓縮..."
+gunzip -f "$TARGET_DIR/$DOWNLOAD_FILE"
+
+echo "建立索引 Building BWA index (this may take a while)..."
+bwa index "$ABS_PATH"
+
 
 echo "--------------------------------------------------"
 echo "Process complete."
 echo "Genome path: $ABS_PATH"
-echo "Environment variable '$ENV_VAR' has been added to ~/.bashrc."
 echo "處理成功。請執行: source ~/.bashrc 使設定生效。"
