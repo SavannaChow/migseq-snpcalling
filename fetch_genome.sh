@@ -122,12 +122,16 @@ echo "下載Genome $ACCESSION 至 $TARGET_DIR..."
 wget -c --tries=0 -P "$TARGET_DIR" "$FULL_URL"
 
 # 6. 設定環境變數 (移至解壓縮之前)
-echo "--------------------------------------------------"
-echo "目前系統已存在的 Reference Genome 變數:"
-grep "^export Ref_" ~/.bashrc || echo "(目前尚無設定任何 Ref_ 變數)"
+echo "目前系統中已定義的變數名稱與路徑 (Ref_XXX):"
+if grep -q "^export Ref_" ~/.bashrc; then
+    # 使用 sed 去除 "export " 並將第一個 "=" 替換成 " -> " 方便閱讀
+    grep "^export Ref_" ~/.bashrc | sed 's/export //g' | sed 's/=/  -->  /g'
+else
+    echo "(目前尚無設定任何 Ref_ 變數)"
+fi
 echo "--------------------------------------------------"
 
-read -p "請輸入參考基因組名稱, 不可使用空白或特殊字元 (e.g., Ahya_XXX): " USER_INPUT
+read -p "請輸入參考基因組名稱, 不要跟現有的重複，也不可使用空白或特殊字元 (e.g., Ahya_XXX): " USER_INPUT
 
 # 若使用者未輸入名稱則停止
 if [ -z "$USER_INPUT" ]; then
