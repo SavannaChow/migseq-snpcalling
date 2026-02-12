@@ -275,12 +275,14 @@ run_fetch_genome_module() {
     ENV_VAR="Ref_${USER_INPUT}"
     FNA_FILE="$TARGET_DIR/${FILE_NAME}_genomic.fna"
     ABS_PATH=$(realpath "$FNA_FILE")
-
+    echo "自動刷新環境變數"
+    exec $SHELL
     # 寫入 .bashrc
     echo "export $ENV_VAR=\"$ABS_PATH\"" >> "$CONF_FILE"
     # 注意：這裡 source 只對當前 shell 有效，主程式需在外部再次 source
     source "$CONF_FILE"
     echo "環境變數 '$ENV_VAR' 已加入 "$CONF_FILE"。"
+
 
     # 7. 解壓縮與建立索引
     echo "解壓縮..."
@@ -293,7 +295,10 @@ run_fetch_genome_module() {
     echo "--------------------------------------------------"
     echo "Process complete."
     echo "Genome path: $ABS_PATH"
-    echo "處理成功。"
+    echo "處理成功。環境變數已寫入 $CONF_FILE"
+    echo "為使新設定生效，將重新載入 Shell。"
+    echo "自動刷新環境變數"
+    exec $SHELL
 }
 
 
