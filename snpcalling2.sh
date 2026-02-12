@@ -67,6 +67,194 @@ check_dependencies() {
 
 check_dependencies
 
+# ------------------------------------------------------------------------------
+# 內嵌模組: Genome Fetcher (原 fetch_genome.sh 邏輯)
+# ------------------------------------------------------------------------------
+run_fetch_genome_module() {
+    echo "======================================================="
+    echo "啟動 NCBI Genome 下載模組"
+    echo "======================================================="
+
+    # 設定基礎下載目錄
+    BASE_DIR=~/RefGenome
+    mkdir -p "$BASE_DIR"
+
+    # 設定隱藏標記檔路徑
+    ENV_CHECK_FILE_FG="$BASE_DIR/.env_verified"
+    REQUIRED_CMDS=("esearch" "bwa" "samtools" "curl" "gunzip")
+
+    # 環境偵測邏輯
+    if [[ ! -f "$ENV_CHECK_FILE_FG" ]]; then
+        echo "Initializing environment check for Genome Fetcher..."
+
+        # 擴展可能的軟體路徑
+        EXTRA_PATHS=("/usr/local/bin" "/opt/bin" "$HOME/bin" "$HOME/edirect")
+        for p in "${EXTRA_PATHS[@]}"; do
+            [[ -d "$p" ]] && export PATH="$p:$PATH"
+        done
+
+        for cmd in "${REQUIRED_CMDS[@]}"; do
+            if ! command -v "$cmd" &> /dev/null; then
+                if [[ "$cmd" == "esearch" ]]; then
+                    echo "EDirect not found. Installing..."
+                    sh -c "$(curl -fsSL https://ftp.ncbi.nlm.nih.gov/entrez/entrezdirect/install-edirect.sh)"
+                    export PATH="$HOME/edirect:$PATH"
+                else
+                    echo "Error: Required command '$cmd' is missing."
+                    return 1 # 改為 return 以免結束主程式
+                fi
+            fi
+        done
+
+        # 建立隱藏標記檔
+        touch "$ENV_CHECK_FILE_FG"
+        echo "Environment verified and cached."
+    fi
+
+    # 進入搜尋與選擇迴圈
+    while true; do
+        # 1. 使用者輸入關鍵字
+        # 不使用 clear 以保留主程式上下文
+        read -p "請輸入搜尋關鍵字 (物種名或 BioProject, 輸入 q 離開): " QUERY
+        
+        if [[ "$QUERY" == "q" || "$QUERY" == "Q" ]]; then
+            echo "取消下載。"
+            return 0
+        fi
+
+        # 2. 執行檢索並暫存結果
+        TEMP_DATA=$(mktemp)
+        
+        TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+        HISTORY_FILE="$BASE_DIR/SearchRecord_${QUERY// /_}_${TIMESTAMP}.txt"
+
+        echo "正在檢索 NCBI 資料庫並解析數據結構..."
+        esearch -db assembly -query "$QUERY" \
+        | esummary \
+        | xtract -pattern DocumentSummary -def "NA" \
+          -element AssemblyAccession AssemblyName AssemblyStatus AssemblyType \
+                   ScaffoldN50 Coverage Isolate RefSeq_category \
+                    SubmissionDate LastUpdateDate SubmitterOrganization FtpPath_GenBank \
+          -block Stat -if @category -equals total_length -element Stat > "$TEMP_DATA"
+
+        if [ ! -s "$TEMP_DATA" ]; then
+            echo "找不到符合結果。"
+            rm "$TEMP_DATA"
+            continue
+        fi
+
+        # 3. 視覺化格式輸出
+        awk -F'\t' '{
+            total_mb = $13 / 1000000
+            printf "-------------------- [ Index: %-4d ] --------------------\n", NR
+            printf "Submitter: %s(%s)\n", $11, $3
+            printf "Assembly Accession | Assembly Name : %s | %s\n", $1, $2
+            printf "Assembly Status    | Assembly Type : %s | %s\n", $3, $4
+            printf "Scaffold N50       | Coverage      : %s | %s X\n", $5, $6
+            printf "Isolate            | RefSeq Class  : %s | %s\n", $7, $8
+            printf "Submission Date    | Update Date   : %s | %s\n", $9, $10
+            printf "Total Genome Size  : %.0f MB\n", total_mb
+            printf "NCBI FTP 路徑: %s\n\n", $12
+        }' "$TEMP_DATA" | tee "$HISTORY_FILE"
+
+        echo "搜尋結果已存檔至: $HISTORY_FILE"
+
+        # 4. 互動式選擇
+        read -p "選擇要下載的Genome編號 (輸入 r 重新搜尋, q 離開): " INDEX
+
+        if [[ "$INDEX" == "q" ]]; then
+            rm "$TEMP_DATA"
+            return 0
+        fi
+
+        if [[ "$INDEX" == "r" ]]; then
+            rm "$TEMP_DATA"
+            echo "重新開始搜尋..."
+            continue
+        fi
+
+        SELECTED_LINE=$(sed -n "${INDEX}p" "$TEMP_DATA")
+
+        if [ -z "$SELECTED_LINE" ]; then
+            echo "Invalid selection."
+            rm "$TEMP_DATA"
+            continue
+        fi
+
+        ACCESSION=$(echo "$SELECTED_LINE" | cut -f1)
+        rm "$TEMP_DATA"
+        break 
+    done
+
+    # 5.獲取 FTP 路徑並下載
+    echo "擷取 $ACCESSION FTP位置..."
+    FTP_BASE=$(esearch -db assembly -query "$ACCESSION" | esummary | xtract -pattern DocumentSummary -element FtpPath_GenBank | tr ' ' '\n' | grep "$ACCESSION" | head -n 1 | sed 's|^ftp://|https://|')
+
+    if [ -z "$FTP_BASE" ]; then
+        echo "FTP path not found."
+        return 1
+    fi
+
+    TARGET_DIR="$BASE_DIR/$ACCESSION"
+    mkdir -p "$TARGET_DIR"
+
+    FILE_NAME=$(basename "$FTP_BASE")
+    DOWNLOAD_FILE="${FILE_NAME}_genomic.fna.gz"
+    FULL_URL="${FTP_BASE}/$DOWNLOAD_FILE"
+
+    echo "下載Genome $ACCESSION 至 $TARGET_DIR..."
+    wget -c --tries=0 -P "$TARGET_DIR" "$FULL_URL"
+
+    echo "--------------------------------------------------"
+    echo "基因組檔案下載完成。"
+    read -p "是否繼續設定環境變數並執行解壓縮與索引建置？(y/n): " CONTINUE_PROC
+    if [[ "$CONTINUE_PROC" != "y" ]]; then
+        echo "程序已終止。檔案保留在 $TARGET_DIR。"
+        return 0
+    fi
+
+    # 6. 設定環境變數
+    # 這裡只顯示，不清除畫面
+    echo "目前系統中已定義的變數名稱與路徑 (Ref_XXX):"
+    if grep -q "^export Ref_" ~/.bashrc; then
+        grep "^export Ref_" ~/.bashrc | sed 's/export //g' | sed 's/=/  -->  /g'
+    else
+        echo "(目前尚無設定任何 Ref_ 變數)"
+    fi
+    echo "--------------------------------------------------"
+    echo ""
+    echo "請輸入參考基因組名稱"
+    echo "不要跟現有的重複，也不可使用空白或特殊字元"
+    read -p "REF_" USER_INPUT
+
+    if [ -z "$USER_INPUT" ]; then
+        echo "錯誤：未輸入名稱，停止執行後續解壓縮與索引程序。"
+        return 1
+    fi
+    
+    ENV_VAR="Ref_${USER_INPUT}"
+    FNA_FILE="$TARGET_DIR/${FILE_NAME}_genomic.fna"
+    ABS_PATH=$(realpath "$FNA_FILE")
+
+    # 寫入 .bashrc
+    echo "export $ENV_VAR=\"$ABS_PATH\"" >> ~/.bashrc
+    # 注意：這裡 source 只對當前 shell 有效，主程式需在外部再次 source
+    source ~/.bashrc
+    echo "環境變數 '$ENV_VAR' 已加入 ~/.bashrc。"
+
+    # 7. 解壓縮與建立索引
+    echo "解壓縮..."
+    gunzip -f "$TARGET_DIR/$DOWNLOAD_FILE"
+
+    echo "建立索引 Building BWA index (this may take a while)..."
+    echo "bwa index $ABS_PATH"
+    bwa index "$ABS_PATH"
+
+    echo "--------------------------------------------------"
+    echo "Process complete."
+    echo "Genome path: $ABS_PATH"
+    echo "處理成功。"
+}
 
 
 # ------------------------------------------------------------------------------
@@ -119,8 +307,10 @@ read -e -p "請輸入原始序列 (raw data) 資料夾路徑: " RAW_PATH
 [ ! -d "$RAW_PATH" ] && { echo "錯誤：找不到路徑 $RAW_PATH"; exit 1; }
 RAW_PATH=$(realpath "$RAW_PATH")
 
-# 1.2 參考基因組配置 (Modified for fetch_genome integration)
+# 1.2 參考基因組配置 (整合下載選單)
+# ==============================================================================
 while true; do
+    # 每次迴圈重新載入 .bashrc 以獲取最新的 Ref_ 變數
     source ~/.bashrc
     MAPFILE=()
     MAPVAL=()
@@ -133,39 +323,30 @@ while true; do
         fi
     done < <(env)
 
+    echo ""
     echo "--- 可用的參考基因組 ---"
     for i in "${!MAPFILE[@]}"; do
         echo "$((i+1))) \$${MAPFILE[$i]} (${MAPVAL[$i]})"
     done
 
-    # 計算手動輸入的選項編號
     MANUAL_OPTION=$(( ${#MAPFILE[@]} + 1 ))
-    
     echo "------------------------"
-    echo "d) 下載新的參考基因組 (呼叫 fetch_genome.sh)"
+    echo "d) 下載/新增參考基因組 (呼叫 NCBI Fetcher)"
     echo "$MANUAL_OPTION) 手動輸入絕對路徑"
     echo "------------------------"
 
     read -p "請選擇參考基因組 (1-$MANUAL_OPTION 或 d): " REF_CHOICE
 
-    # --- 新增功能：呼叫 fetch_genome.sh ---
+    # 分支邏輯
     if [[ "$REF_CHOICE" == "d" || "$REF_CHOICE" == "D" ]]; then
-        if [ -f "fetch_genome.sh" ]; then
-            chmod +x fetch_genome.sh
-            ./fetch_genome.sh
-            
-            echo ""
-            echo ">>> 外部程序結束，正在重新載入環境變數並刷新清單..."
-            echo "-------------------------------------------------------"
-            # 這裡不 break，直接 continue 回到 while 開頭，重新 source bashrc 並重繪選單
-            continue
-        else
-            echo "錯誤：在當前目錄下找不到 fetch_genome.sh，無法執行下載。"
-            read -p "按 Enter 鍵返回選單..."
-            continue
-        fi
+        # 呼叫內嵌的下載模組
+        run_fetch_genome_module
+        
+        echo ""
+        echo ">>> 返回主選單，正在刷新參考基因組清單..."
+        # 不 break，continue 回到 while 開頭
+        continue
     fi
-    # --------------------------------------
 
     # 驗證輸入為純數字且在選項範圍內
     if [[ "$REF_CHOICE" =~ ^[0-9]+$ ]] && [ "$REF_CHOICE" -ge 1 ] && [ "$REF_CHOICE" -le "${#MAPFILE[@]}" ]; then
@@ -175,7 +356,7 @@ while true; do
         read -e -p "請輸入絕對路徑: " REF_GENOME
         break # 選擇成功，跳出迴圈
     else
-        echo "錯誤：無效的選擇，請重新輸入。"
+        echo "錯誤：無效的選擇。"
         # 輸入錯誤，不 break，自動重跑迴圈
     fi
 done
@@ -189,7 +370,7 @@ if [ -z "$REF_GENOME" ] || [ ! -f "$REF_GENOME" ]; then
     exit 1
 fi
 
-# 索引狀態檢查與建立 (這部分邏輯不變，確保 fetch_genome 沒做的 faidx 在此補足)
+# 索引狀態檢查與建立
 if [ ! -f "${REF_GENOME}.bwt" ]; then
     echo "建立 BWA index..."
     bwa index "$REF_GENOME" || { echo "BWA index 失敗"; exit 1; }
@@ -201,6 +382,7 @@ if [ ! -f "${REF_GENOME}.fai" ]; then
 fi
 
 echo "使用參考基因組: $REF_GENOME"
+# ==============================================================================
 
 
 
