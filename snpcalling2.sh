@@ -2,7 +2,20 @@
 # ==============================================================================
 # MIG Analysis Full Pipeline - Smart Hybrid Mode (v8.12)
 # ==============================================================================
-source ~/.bashrc
+
+# --- [新增] 自動偵測 Shell 設定檔路徑 ---
+if [[ "$SHELL" == */zsh ]]; then
+    CONF_FILE="$HOME/.zshrc"
+elif [[ "$OSTYPE" == "darwin"* ]]; then
+    CONF_FILE="$HOME/.bash_profile"
+else
+    CONF_FILE="$HOME/.bashrc"
+fi
+[ ! -f "$CONF_FILE" ] && touch "$CONF_FILE"
+# ---------------------------------------
+
+source "$CONF_FILE"
+
 
 # ------------------------------------------------------------------------------
 # 環境依賴檢查 (Dependency Check)
@@ -214,10 +227,34 @@ run_fetch_genome_module() {
     fi
 
     # 6. 設定環境變數
-    # 這裡只顯示，不清除畫面
+    clear
+    
+    # --- 新增功能：顯示剛才下載的基因組資訊 ---
+    if [ -n "$SELECTED_LINE" ]; then
+        echo "=================================================="
+        echo "           [ 已下載基因組詳細資訊 ]"
+        echo "--------------------------------------------------"
+        echo "$SELECTED_LINE" | awk -F'\t' '{
+            total_mb = $13 / 1000000
+            printf "Submitter          : %s(%s)\n", $11, $3
+            printf "Assembly Accession : %s\n", $1
+            printf "Assembly Name      : %s\n", $2
+            printf "Assembly Status    : %s | Type: %s\n", $3, $4
+            printf "Scaffold N50       : %s\n", $5
+            printf "Coverage           : %s X\n", $6
+            printf "Isolate            : %s\n", $7
+            printf "RefSeq Class       : %s\n", $8
+            printf "Submission Date    : %s\n", $9
+            printf "Total Genome Size  : %.0f MB\n", total_mb
+        }'
+        echo "=================================================="
+        echo ""
+    fi
+    # --------------------------------------------------------
+
     echo "目前系統中已定義的變數名稱與路徑 (Ref_XXX):"
-    if grep -q "^export Ref_" ~/.bashrc; then
-        grep "^export Ref_" ~/.bashrc | sed 's/export //g' | sed 's/=/  -->  /g'
+    if grep -q "^export Ref_" "$CONF_FILE"; then
+        grep "^export Ref_" "$CONF_FILE" | sed 's/export //g' | sed 's/=/  -->  /g'
     else
         echo "(目前尚無設定任何 Ref_ 變數)"
     fi
@@ -237,10 +274,10 @@ run_fetch_genome_module() {
     ABS_PATH=$(realpath "$FNA_FILE")
 
     # 寫入 .bashrc
-    echo "export $ENV_VAR=\"$ABS_PATH\"" >> ~/.bashrc
+    echo "export $ENV_VAR=\"$ABS_PATH\"" >> "$CONF_FILE"
     # 注意：這裡 source 只對當前 shell 有效，主程式需在外部再次 source
-    source ~/.bashrc
-    echo "環境變數 '$ENV_VAR' 已加入 ~/.bashrc。"
+    source "$CONF_FILE"
+    echo "環境變數 '$ENV_VAR' 已加入 "$CONF_FILE"。"
 
     # 7. 解壓縮與建立索引
     echo "解壓縮..."
@@ -311,7 +348,7 @@ RAW_PATH=$(realpath "$RAW_PATH")
 # ==============================================================================
 while true; do
     # 每次迴圈重新載入 .bashrc 以獲取最新的 Ref_ 變數
-    source ~/.bashrc
+    source "$CONF_FILE"
     MAPFILE=()
     MAPVAL=()
 
