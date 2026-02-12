@@ -234,6 +234,17 @@ run_fetch_genome_module() {
         echo "=================================================="
         echo "           [ 已下載基因組詳細資訊 ]"
         echo "--------------------------------------------------"
+        # 提取資訊並清理特殊字元
+        RAW_ACC=$(echo "$SELECTED_LINE" | awk -F'\t' '{print $1}')
+        RAW_NAME=$(echo "$SELECTED_LINE" | awk -F'\t' '{print $2}')
+
+        # 將所有非英數字元 (包含 . - 空白) 替換為下底線，並壓縮連續的下底線
+        CLEAN_ACC=$(echo "$RAW_ACC" | sed 's/[^a-zA-Z0-9]/_/g' | sed 's/_\+/_/g')
+        CLEAN_NAME=$(echo "$RAW_NAME" | sed 's/[^a-zA-Z0-9]/_/g' | sed 's/_\+/_/g')
+        
+        # 組合建議的變數名稱
+        SUGGESTED_INPUT="${CLEAN_NAME}_${CLEAN_ACC}"
+
         echo "$SELECTED_LINE" | awk -F'\t' '{
             total_mb = $13 / 1000000
             printf "Submitter          : %s(%s)\n", $11, $3
@@ -283,21 +294,25 @@ run_fetch_genome_module() {
     echo "嚴禁包含小數點（.）、破折號（-）或其他標點符號"
     echo "只能包含字母（a-z, A-Z）、數字（0-9）以及下底線（_）。"
     echo "--------------------------------------------------"
-    read -p "REF_" USER_INPUT
-
-    if [ -z "$USER_INPUT" ]; then
-        echo "錯誤：未輸入名稱，停止執行後續解壓縮與索引程序。"
-        return 1
-    fi
+    # 給使用者自己輸入版本read -p "REF_" USER_INPUT
+    # 以下自動帶入建議版本，讓使用者確認或修改，預設直接帶入建議值
+    echo "請命名剛剛下載好的參考基因組名稱"
+    echo "或是按Enter直接使用建議值: ${SUGGESTED_INPUT})"
+    read -p "請輸入：" USER_INPUT
     
-    ENV_VAR="Ref_${USER_INPUT}"
+    # 如果使用者直接按 Enter，就使用自動生成的建議名稱
+    if [ -z "$USER_INPUT" ]; then
+        FINAL_INPUT="$SUGGESTED_INPUT"
+    else
+        # 即使是使用者輸入，也強制過濾一次特殊字元確保安全
+        FINAL_INPUT=$(echo "$USER_INPUT" | sed 's/[^a-zA-Z0-9]/_/g' | sed 's/_\+/_/g')
+    fi
+
+    ENV_VAR="Ref_${FINAL_INPUT}"
     FNA_FILE="$TARGET_DIR/${FILE_NAME}_genomic.fna"
     ABS_PATH=$(realpath "$FNA_FILE")
-    # 寫入 .bashrc
-    echo "export $ENV_VAR=\"$ABS_PATH\"" >> "$CONF_FILE"
-    # 注意：這裡 source 只對當前 shell 有效，主程式需在外部再次 source
-    source "$CONF_FILE"
-    echo "環境變數 '$ENV_VAR' 已加入 "$CONF_FILE"。"
+    
+    echo "最終變數名稱將設定為: $ENV_VAR"
 
 
     # 7. 解壓縮與建立索引
@@ -307,12 +322,17 @@ run_fetch_genome_module() {
     echo "建立索引 Building BWA index (this may take a while)..."
     echo "bwa index $ABS_PATH"
     bwa index "$ABS_PATH"
-
+    echo "寫入環境變數$CONF_FILE"
+    # 寫入 .bashrc
+    echo "export $ENV_VAR=\"$ABS_PATH\"" >> "$CONF_FILE"
+    # 這裡 source 只對當前 shell 有效，主程式需在外部再次 source
+    source "$CONF_FILE"
+    echo "環境變數 '$ENV_VAR' 已加入 "$CONF_FILE"。"
     echo "--------------------------------------------------"
     echo "Process complete."
     echo "Genome path: $ABS_PATH"
     echo "處理成功。環境變數已寫入 $CONF_FILE"
-    echo "請關閉視窗來重新載入新的Ref Genome位置"
+    echo "請關閉視窗，重新載入分析才能讀到新的Ref Genome位置"
     exec $SHELL
 }
 
