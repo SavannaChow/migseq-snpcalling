@@ -131,6 +131,20 @@ mkdir -p "$STAGE1/trim" "$STAGE1/fastp_report" "$STAGE2/bam" "$STAGE2/mapped_bam
 THREADS=$(nproc 2>/dev/null || sysctl -n hw.ncpu)
 JOBS=$(( THREADS / 4 )); [ "$JOBS" -lt 1 ] && JOBS=1
 
+# 2. 目錄與日誌初始化後
+echo "======================================================="
+echo "  分析配置"
+echo "-------------------------------------------------------"
+echo ""
+echo "  啟動時間   : $(date)"
+echo "  專案名稱   : $PROJECT_NAME"
+echo "  執行執行緒 : $THREADS (Jobs: $JOBS)"
+echo "  原始路徑   : $RAW_PATH"
+echo "  參考基因組 : $REF_GENOME"
+echo ""
+echo "  日誌檔案   : $LOG_FILE"
+echo "======================================================="
+echo ""
 
 
 
@@ -577,20 +591,6 @@ case "$RUN_CHOICE" in
        ;;
 esac
 
-# 2. 目錄與日誌初始化後
-echo "======================================================="
-echo "  分析配置總結"
-echo "-------------------------------------------------------"
-echo ""
-echo "  啟動時間   : $(date)"
-echo "  專案名稱   : $PROJECT_NAME"
-echo "  執行執行緒 : $THREADS (Jobs: $JOBS)"
-echo "  原始路徑   : $RAW_PATH"
-echo "  參考基因組 : $REF_GENOME"
-echo ""
-echo "  日誌檔案   : $LOG_FILE"
-echo "======================================================="
-echo ""
 
 
 # ------------------------------------------------------------------------------
@@ -598,27 +598,26 @@ echo ""
 # ------------------------------------------------------------------------------
 # 轉換模式與流程的顯示字串
 clear
-[[ "$RUN_MODE" == "1" ]] && MODE_STR="自動模式 (Auto)" || MODE_STR="互動模式 (Manual)"
-
-case "$RUN_CHOICE" in
-    1) RANGE_STR="完整分析 (Stage 1-6)" ;;
-    2) RANGE_STR="序列清理與比對 (Stage 1-2)" ;;
-    3) RANGE_STR="問題樣本過濾 (Stage 3-4)" ;;
-    4) RANGE_STR="LD Pruning (Stage 5)" ;;
-    5) RANGE_STR="最終 SNP Calling (Stage 6)" ;;
-    *) RANGE_STR="自定義流程" ;;
-esac
 echo "                      執行前最終確認                      "
 echo ""
 echo "======================================================="
 echo "  分析參數確認"
 echo "-------------------------------------------------------"
 echo ""
+[[ "$RUN_MODE" == "1" ]] && MODE_STR="自動模式 (Auto)" || MODE_STR="互動模式 (Manual)"
+
 printf "  %-15s : %s\n" "專案名稱" "$PROJECT_NAME"
 printf "  %-15s : %s\n" "原始資料路徑" "$RAW_PATH"
 printf "  %-15s : %s\n" "參考基因組" "$REF_GENOME"
 printf "  %-15s : %s\n" "執行模式" "$MODE_STR"
-printf "  %-15s : %s\n" "運行範圍" "$RANGE_STR"
+
+echo "  運行範圍       :"
+[[ "$RUN_S1" == "y" ]] && echo "    - 序列修剪 (Fastp Trimming)"
+[[ "$RUN_S2" == "y" ]] && echo "    - 基因組比對 (BWA Alignment)"
+[[ "$RUN_S3" == "y" ]] && echo "    - 樣本品質過濾 (PCA Outlier Filtering)"
+[[ "$RUN_S4" == "y" ]] && echo "    - 複本樣本鑑定 (Clone Identification)"
+[[ "$RUN_S5" == "y" ]] && echo "    - 連鎖不平衡過濾 (LD Pruning & Site Map Generation)"
+[[ "$RUN_S6" == "y" ]] && echo "    - 最終變異位點標定 (Final SNP Calling & VCF Output)"
 
 if [ "$RUN_MODE" == "1" ]; then
     printf "  %-15s : %s\n" "PCA Outlier 決策" "$([[ "$AUTO_PCA_CHOICE" == "1" ]] && echo "移除" || echo "保留")"
