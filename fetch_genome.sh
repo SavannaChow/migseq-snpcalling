@@ -47,15 +47,26 @@ while true; do
     TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
     HISTORY_FILE="$BASE_DIR/SearchRecord_${QUERY// /_}_${TIMESTAMP}.txt"
 
-    echo "正在檢索 NCBI 資料庫並解析數據結構"
-    esearch -db assembly -query "\"${QUERY}\"[Assembly Accession]" \
-    | esummary \
-    | xtract -pattern DocumentSummary -def "NA" \
-      -element AssemblyAccession AssemblyName AssemblyStatus \
-               BioprojectAccn SubmitterOrganization Isolate \
-               Coverage ScaffoldN50 AssemblyType RefSeq_category BioSampleAccn \
-               SubmissionDate LastUpdateDate FtpPath_GenBank \
-      -block Stat -if @category -equals total_length -element Stat > "$TEMP_DATA"
+echo "正在檢索 NCBI 資料庫並解析數據結構"
+esearch -db assembly -query "\"${QUERY}\"[Assembly Accession]" \
+| esummary \
+| xtract -pattern DocumentSummary -def "NA" \
+  -lbl "AssemblyAccession"       -element AssemblyAccession \
+  -lbl "AssemblyName"            -element AssemblyName \
+  -lbl "AssemblyStatus"          -element AssemblyStatus \
+  -lbl "BioprojectAccn"          -block Bioproj   -sep "," -element BioprojectAccn \
+  -lbl "SubmitterOrganization"   -element SubmitterOrganization \
+  -lbl "Isolate"                 -block Biosource -sep "," -element Isolate \
+  -lbl "Coverage"                -element Coverage \
+  -lbl "ScaffoldN50"             -element ScaffoldN50 \
+  -lbl "AssemblyType"            -element AssemblyType \
+  -lbl "RefSeq_category"         -element RefSeq_category \
+  -lbl "BioSampleAccn"           -element BioSampleAccn \
+  -lbl "SubmissionDate"          -element SubmissionDate \
+  -lbl "LastUpdateDate"          -element LastUpdateDate \
+  -lbl "FtpPath_GenBank"         -element FtpPath_GenBank \
+  -lbl "total_length"            -block Stat -if @category -equals total_length -element Stat \
+> "$TEMP_DATA"
 
     if [ ! -s "$TEMP_DATA" ]; then
         echo "找不到符合結果。"
@@ -81,22 +92,30 @@ while true; do
 
 
     # 3. 視覺化格式輸出並同步存檔至 BASE_DIR
-    awk -F'\t' '{
-  total_mb = $15 / 1000000
+awk -F'\t' '
+{
+    data[$1] = $2
+}
+END{
+    total_mb = "NA"
+    if (data["total_length"] != "NA" && data["total_length"] ~ /^[0-9]+$/) {
+        total_mb = data["total_length"] / 1000000
+    }
 
-printf "-------------------- [ Index: %-4d ] --------------------\n", NR
+    printf "-------------------- [ Index: %-4d ] --------------------\n", 1
+    printf "ID & ACC       | %s | %s\n", data["AssemblyName"], data["AssemblyAccession"]
+    printf "SOURCE         | Project: %s | BioSample: %s | Isolate: %s\n", data["BioprojectAccn"], data["BioSampleAccn"], data["Isolate"]
+    printf "SPECS          | Status: %s | Type: %s | RefSeq: %s\n", data["AssemblyStatus"], data["AssemblyType"], data["RefSeq_category"]
 
-printf "AssemblyAccession $1  | %s    AssemblyName $2  | %s    AssemblyStatus $3  | %s\n",  $1,  $2,  $3
-printf "BioprojectAccn $4     | %s    SubmitterOrg $5  | %s    Isolate $6         | %s\n",  $4,  $5,  $6
-printf "Coverage $7           | %s    ScaffoldN50 $8   | %s    AssemblyType $9    | %s\n",  $7,  $8,  $9
-printf "RefSeq_category $10   | %s    BioSampleAccn $11| %s    SubmissionDate $12 | %s\n", $10, $11, $12
-printf "LastUpdateDate $13    | %s    total_length $15 | %s\n", $13, $15
+    if (total_mb == "NA") printf "GENOME         | NA\n"
+    else printf "GENOME         | %.0f Mb (total)\n", total_mb
 
-printf "FtpPath_GenBank $14   | %s\n", $14
-
-printf "TOTAL_MB              | %.0f\n\n", total_mb
-
-    }' "$TEMP_DATA" | tee "$HISTORY_FILE"
+    printf "QUALITY        | ScaffoldN50: %s | Coverage: %s\n", data["ScaffoldN50"], data["Coverage"]
+    printf "SUBMITTER      | %s\n", data["SubmitterOrganization"]
+    printf "DATE           | Submitted: %s | Updated: %s\n", data["SubmissionDate"], data["LastUpdateDate"]
+    printf "FTP            | %s_genomic.fna.gz\n\n", data["FtpPath_GenBank"]
+}
+' "$TEMP_DATA" | tee "$HISTORY_FILE"
 
     echo "搜尋結果已存檔至: $HISTORY_FILE"
 
