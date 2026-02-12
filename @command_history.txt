@@ -84,3 +84,6 @@
 ' | grep "$ACCESSION" | head -n 1 | | sed 's|^ftp://|https://|'
 [2026-02-12 12:37:12] [from Darwin SavannaMacBookPro-9.local]  3132  esearch -db assembly -query "GCA_964332325.1" | esummary | xtract -pattern DocumentSummary -element FtpPath_GenBank | tr ' ' '
 ' | grep "$ACCESSION" | head -n 1 | sed 's|^ftp://|https://|'
+[2026-02-12 13:06:31] [from Darwin SavannaMacBookPro-9.local]  3138  cd '/Users/savannachow/Github/migseq-snpcalling/'
+[2026-02-12 13:06:47] [from Darwin SavannaMacBookPro-9.local]  3139  chmod 755 ./snpcalling.sh
+[2026-02-12 13:07:19] [from Darwin SavannaMacBookPro-9.local]  3140  ./snpcalling.sh

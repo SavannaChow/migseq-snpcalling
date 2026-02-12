@@ -119,38 +119,66 @@ read -e -p "請輸入原始序列 (raw data) 資料夾路徑: " RAW_PATH
 [ ! -d "$RAW_PATH" ] && { echo "錯誤：找不到路徑 $RAW_PATH"; exit 1; }
 RAW_PATH=$(realpath "$RAW_PATH")
 
-# 1.2 參考基因組配置
-source ~/.bashrc
-MAPFILE=()
-MAPVAL=()
+# 1.2 參考基因組配置 (Modified for fetch_genome integration)
+while true; do
+    source ~/.bashrc
+    MAPFILE=()
+    MAPVAL=()
 
-# 過濾環境變數中以 .fa, .fasta, .fna 結尾的路徑
-while IFS='=' read -r name value; do
-    if [[ "$value" =~ \.(fa|fasta|fna)$ ]]; then
-        MAPFILE+=("$name")
-        MAPVAL+=("$value")
+    # 過濾環境變數中以 .fa, .fasta, .fna 結尾的路徑
+    while IFS='=' read -r name value; do
+        if [[ "$value" =~ \.(fa|fasta|fna)$ ]]; then
+            MAPFILE+=("$name")
+            MAPVAL+=("$value")
+        fi
+    done < <(env)
+
+    echo "--- 可用的參考基因組 ---"
+    for i in "${!MAPFILE[@]}"; do
+        echo "$((i+1))) \$${MAPFILE[$i]} (${MAPVAL[$i]})"
+    done
+
+    # 計算手動輸入的選項編號
+    MANUAL_OPTION=$(( ${#MAPFILE[@]} + 1 ))
+    
+    echo "------------------------"
+    echo "d) 下載新的參考基因組 (呼叫 fetch_genome.sh)"
+    echo "$MANUAL_OPTION) 手動輸入絕對路徑"
+    echo "------------------------"
+
+    read -p "請選擇參考基因組 (1-$MANUAL_OPTION 或 d): " REF_CHOICE
+
+    # --- 新增功能：呼叫 fetch_genome.sh ---
+    if [[ "$REF_CHOICE" == "d" || "$REF_CHOICE" == "D" ]]; then
+        if [ -f "fetch_genome.sh" ]; then
+            chmod +x fetch_genome.sh
+            ./fetch_genome.sh
+            
+            echo ""
+            echo ">>> 外部程序結束，正在重新載入環境變數並刷新清單..."
+            echo "-------------------------------------------------------"
+            # 這裡不 break，直接 continue 回到 while 開頭，重新 source bashrc 並重繪選單
+            continue
+        else
+            echo "錯誤：在當前目錄下找不到 fetch_genome.sh，無法執行下載。"
+            read -p "按 Enter 鍵返回選單..."
+            continue
+        fi
     fi
-done < <(env)
+    # --------------------------------------
 
-echo "--- 可用的參考基因組 ---"
-for i in "${!MAPFILE[@]}"; do
-    echo "$((i+1))) \$${MAPFILE[$i]} (${MAPVAL[$i]})"
+    # 驗證輸入為純數字且在選項範圍內
+    if [[ "$REF_CHOICE" =~ ^[0-9]+$ ]] && [ "$REF_CHOICE" -ge 1 ] && [ "$REF_CHOICE" -le "${#MAPFILE[@]}" ]; then
+        REF_GENOME="${MAPVAL[$((REF_CHOICE-1))]}"
+        break # 選擇成功，跳出迴圈
+    elif [ "$REF_CHOICE" -eq "$MANUAL_OPTION" ]; then
+        read -e -p "請輸入絕對路徑: " REF_GENOME
+        break # 選擇成功，跳出迴圈
+    else
+        echo "錯誤：無效的選擇，請重新輸入。"
+        # 輸入錯誤，不 break，自動重跑迴圈
+    fi
 done
-
-MANUAL_OPTION=$(( ${#MAPFILE[@]} + 1 ))
-echo "$MANUAL_OPTION) 手動輸入絕對路徑"
-
-read -p "請選擇參考基因組 (1-$MANUAL_OPTION): " REF_CHOICE
-
-# 驗證輸入為純數字且在選項範圍內
-if [[ "$REF_CHOICE" =~ ^[0-9]+$ ]] && [ "$REF_CHOICE" -ge 1 ] && [ "$REF_CHOICE" -le "${#MAPFILE[@]}" ]; then
-    REF_GENOME="${MAPVAL[$((REF_CHOICE-1))]}"
-elif [ "$REF_CHOICE" -eq "$MANUAL_OPTION" ]; then
-    read -e -p "請輸入絕對路徑: " REF_GENOME
-else
-    echo "錯誤：無效的選擇。"
-    exit 1
-fi
 
 # 移除潛在的引號或空白，確保路徑純淨
 REF_GENOME=$(echo "$REF_GENOME" | sed "s/['\"]//g")
@@ -161,7 +189,7 @@ if [ -z "$REF_GENOME" ] || [ ! -f "$REF_GENOME" ]; then
     exit 1
 fi
 
-# 索引狀態檢查與建立
+# 索引狀態檢查與建立 (這部分邏輯不變，確保 fetch_genome 沒做的 faidx 在此補足)
 if [ ! -f "${REF_GENOME}.bwt" ]; then
     echo "建立 BWA index..."
     bwa index "$REF_GENOME" || { echo "BWA index 失敗"; exit 1; }
@@ -173,6 +201,8 @@ if [ ! -f "${REF_GENOME}.fai" ]; then
 fi
 
 echo "使用參考基因組: $REF_GENOME"
+
+
 
 # 1.3 模式選擇
 echo ""
