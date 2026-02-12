@@ -64,3 +64,23 @@
 [2026-02-12 11:34:55] [from Darwin SavannaMacBookPro-9.local]  3103  ./fetch_genome.sh
 [2026-02-12 11:36:41] [from Darwin SavannaMacBookPro-9.local]  3103  ./fetch_genome.sh
 [2026-02-12 11:38:56] [from Darwin SavannaMacBookPro-9.local]  3103  ./fetch_genome.sh
+[2026-02-12 11:44:54] [from Darwin SavannaMacBookPro-9.local]  3103  ./fetch_genome.sh
+[2026-02-12 11:45:13] [from Darwin SavannaMacBookPro-9.local]  3104  cat ~/.bashrc
+[2026-02-12 11:48:33] [from Darwin SavannaMacBookPro-9.local]  3105  clear
+[2026-02-12 11:49:49] [from Darwin SavannaMacBookPro-9.local]  3108  cd Github/migseq-snpcalling
+[2026-02-12 11:49:50] [from Darwin SavannaMacBookPro-9.local]  3109  ll
+[2026-02-12 11:54:28] [from Darwin SavannaMacBookPro-9.local]  3110  ./fetch_genome.sh
+[2026-02-12 11:54:45] [from Darwin SavannaMacBookPro-9.local]  3111  ls /Users/savannachow/RefGenome/GCA_964332325.1/GCA_964332325.1_jaAcrMuri1.1_genomic.fna.gz
+[2026-02-12 11:55:29] [from Darwin SavannaMacBookPro-9.local]  3112  gunzip -f /Users/savannachow/RefGenome/GCA_964332325.1/GCA_964332325.1_jaAcrMuri1.1_genomic.fna.gz
+
+[2026-02-12 11:57:06] [from Darwin SavannaMacBookPro-9.local]  3113  gzip -t /Users/savannachow/RefGenome/GCA_964332325.1/GCA_964332325.1_jaAcrMuri1.1_genomic.fna.gz
+[2026-02-12 12:32:20] [from Darwin SavannaMacBookPro-9.local]  3128  cd Github/migseq-snpcalling
+[2026-02-12 12:33:47] [from Darwin SavannaMacBookPro-9.local]  3129  ./fetch_genome.sh
+[2026-02-12 12:34:10] [from Darwin SavannaMacBookPro-9.local]  3129  ./fetch_genome.sh
+[2026-02-12 12:34:47] [from Darwin SavannaMacBookPro-9.local]  3129  ./fetch_genome.sh
+[2026-02-12 12:35:08] [from Darwin SavannaMacBookPro-9.local]  3130  esearch -db assembly -query "GCA_964332325.1" | esummary | xtract -pattern DocumentSummary -element FtpPath_GenBank | tr ' ' '
+' | grep "$ACCESSION" | head -n 1
+[2026-02-12 12:37:03] [from Darwin SavannaMacBookPro-9.local]  3131  esearch -db assembly -query "GCA_964332325.1" | esummary | xtract -pattern DocumentSummary -element FtpPath_GenBank | tr ' ' '
+' | grep "$ACCESSION" | head -n 1 | | sed 's|^ftp://|https://|'
+[2026-02-12 12:37:12] [from Darwin SavannaMacBookPro-9.local]  3132  esearch -db assembly -query "GCA_964332325.1" | esummary | xtract -pattern DocumentSummary -element FtpPath_GenBank | tr ' ' '
+' | grep "$ACCESSION" | head -n 1 | sed 's|^ftp://|https://|'

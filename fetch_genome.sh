@@ -127,7 +127,7 @@ done
 # 5.獲取 FTP 路徑並下載
 echo "擷取 $ACCESSION FTP位置..."
 # 修改處：加入 grep 過濾與 head -n 1，確保只抓取包含該 Accession 的單一路徑
-FTP_BASE=$(esearch -db assembly -query "$ACCESSION" | esummary | xtract -pattern DocumentSummary -element FtpPath_GenBank | tr ' ' '\n' | grep "$ACCESSION" | head -n 1)
+FTP_BASE=$(esearch -db assembly -query "$ACCESSION" | esummary | xtract -pattern DocumentSummary -element FtpPath_GenBank | tr ' ' '\n' | grep "$ACCESSION" | head -n 1 | sed 's|^ftp://|https://|')
 
 if [ -z "$FTP_BASE" ]; then
     echo "FTP path not found."
@@ -144,7 +144,19 @@ FULL_URL="${FTP_BASE}/$DOWNLOAD_FILE"
 echo "下載Genome $ACCESSION 至 $TARGET_DIR..."
 wget -c --tries=0 -P "$TARGET_DIR" "$FULL_URL"
 
+# --------------------------------------------------
+# 詢問是否繼續後續程序
+# --------------------------------------------------
+echo "--------------------------------------------------"
+echo "基因組檔案下載完成。"
+read -p "是否繼續設定環境變數並執行解壓縮與索引建置？(y/n): " CONTINUE_PROC
+if [[ "$CONTINUE_PROC" != "y" ]]; then
+    echo "程序已終止。檔案保留在 $TARGET_DIR。"
+    exit 0
+fi
+
 # 6. 設定環境變數 (移至解壓縮之前)
+clear
 echo "目前系統中已定義的變數名稱與路徑 (Ref_XXX):"
 if grep -q "^export Ref_" ~/.bashrc; then
     # 使用 sed 去除 "export " 並將第一個 "=" 替換成 " -> " 方便閱讀
@@ -154,7 +166,8 @@ else
 fi
 echo "--------------------------------------------------"
 echo ""
-echo "請輸入參考基因組名稱, 不要跟現有的重複，也不可使用空白或特殊字元"
+echo "請輸入參考基因組名稱"
+echo "不要跟現有的重複，也不可使用空白或特殊字元"
 read -p "REF_" USER_INPUT
 
 # 若使用者未輸入名稱則停止
@@ -177,9 +190,11 @@ echo "環境變數 '$ENV_VAR' 已加入 ~/.bashrc。"
 
 # 7. 解壓縮與建立索引 (只有在環境變數設定後才跑)
 echo "解壓縮..."
+echo "$TARGET_DIR/$DOWNLOAD_FILE"
 gunzip -f "$TARGET_DIR/$DOWNLOAD_FILE"
 
 echo "建立索引 Building BWA index (this may take a while)..."
+echo "bwa index $ABS_PATH"
 bwa index "$ABS_PATH"
 
 
