@@ -258,17 +258,23 @@ run_fetch_genome_module() {
     # else
     #     echo "(目前尚無設定任何 Ref_ 變數)"
     # fi
+    source "$CONF_FILE"
+    MAPFILE=()
+    MAPVAL=()
 
-    echo "目前系統中已定義的參考基因組變數與路徑:"
-    # 使用 grep 提取 export 行，並透過 ERE 篩選常見的基因組副檔名
-    if grep -E "^export .+=.+\.(fa|fasta|fna)\s*$" "$CONF_FILE" > /dev/null; then
-        grep -E "^export .+=.+\.(fa|fasta|fna)\s*$" "$CONF_FILE" | \
-        sed 's/export //g' | \
-        sed 's/=/  -->  /g'
-    else
-        echo "(目前設定檔中尚無有效的基因組變數)"
-    fi
+    # 過濾環境變數中以 .fa, .fasta, .fna 結尾的路徑
+    while IFS='=' read -r name value; do
+        if [[ "$value" =~ \.(fa|fasta|fna)$ ]]; then
+            MAPFILE+=("$name")
+            MAPVAL+=("$value")
+        fi
+    done < <(env)
 
+    echo ""
+    echo "--- 可用的參考基因組 ---"
+    for i in "${!MAPFILE[@]}"; do
+        echo "$((i+1))) \$${MAPFILE[$i]} (${MAPVAL[$i]})"
+    done
 
     echo "--------------------------------------------------"
     echo "              請輸入參考基因組名稱                   "
@@ -306,8 +312,8 @@ run_fetch_genome_module() {
     echo "Process complete."
     echo "Genome path: $ABS_PATH"
     echo "處理成功。環境變數已寫入 $CONF_FILE"
-    echo "為使新設定生效，將重新載入 Shell。"
-    echo "自動刷新環境變數"
+    echo "請關閉視窗來重新載入新的Ref Genome位置"
+    exec $SHELL
 }
 
 
