@@ -47,26 +47,15 @@ while true; do
     TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
     HISTORY_FILE="$BASE_DIR/SearchRecord_${QUERY// /_}_${TIMESTAMP}.txt"
 
-echo "正在檢索 NCBI 資料庫並解析數據結構"
-esearch -db assembly -query "\"${QUERY}\"[Assembly Accession]" \
-| esummary \
-| xtract -pattern DocumentSummary -def "NA" \
-  -lbl "AssemblyAccession"       -element AssemblyAccession \
-  -lbl "AssemblyName"            -element AssemblyName \
-  -lbl "AssemblyStatus"          -element AssemblyStatus \
-  -lbl "BioprojectAccn"          -block Bioproj   -sep "," -element BioprojectAccn \
-  -lbl "SubmitterOrganization"   -element SubmitterOrganization \
-  -lbl "Isolate"                 -block Biosource -sep "," -element Isolate \
-  -lbl "Coverage"                -element Coverage \
-  -lbl "ScaffoldN50"             -element ScaffoldN50 \
-  -lbl "AssemblyType"            -element AssemblyType \
-  -lbl "RefSeq_category"         -element RefSeq_category \
-  -lbl "BioSampleAccn"           -element BioSampleAccn \
-  -lbl "SubmissionDate"          -element SubmissionDate \
-  -lbl "LastUpdateDate"          -element LastUpdateDate \
-  -lbl "FtpPath_GenBank"         -element FtpPath_GenBank \
-  -lbl "total_length"            -block Stat -if @category -equals total_length -element Stat \
-> "$TEMP_DATA"
+    echo "正在檢索 NCBI 資料庫並解析數據結構"
+    esearch -db assembly -query "$QUERY" \
+    | esummary \
+    | xtract -pattern DocumentSummary -def "NA" \
+      -element AssemblyAccession AssemblyName AssemblyStatus \
+               BioprojectAccn SubmitterOrganization Isolate \
+               Coverage ScaffoldN50 AssemblyType RefSeq_category BioSampleAccn \
+               SubmissionDate LastUpdateDate FtpPath_GenBank \
+      -block Stat -if @category -equals total_length -element Stat > "$TEMP_DATA"
 
     if [ ! -s "$TEMP_DATA" ]; then
         echo "找不到符合結果。"
@@ -74,48 +63,20 @@ esearch -db assembly -query "\"${QUERY}\"[Assembly Accession]" \
         continue
     fi
 
-# 1  AssemblyAccession
-# 2  AssemblyName
-# 3  AssemblyStatus
-# 4  BioprojectAccn
-# 5  SubmitterOrganization
-# 6  Isolate
-# 7  Coverage
-# 8  ScaffoldN50
-# 9  AssemblyType
-# 10 RefSeq_category
-# 11 BioSampleAccn
-# 12 SubmissionDate
-# 13 LastUpdateDate
-# 14 FtpPath_GenBank
-# 15 total_length
-
-
     # 3. 視覺化格式輸出並同步存檔至 BASE_DIR
-awk -F'\t' '
-{
-    data[$1] = $2
-}
-END{
-    total_mb = "NA"
-    if (data["total_length"] != "NA" && data["total_length"] ~ /^[0-9]+$/) {
-        total_mb = data["total_length"] / 1000000
-    }
+    awk -F'\t' '{
+        total_mb     = $15 / 1000000
+        printf "-------------------- [ Index: %-4d ] --------------------\n", NR
+        printf "ID & ACC       | %s | %s\n", $2, $1
+        printf "SOURCE         | Project: %s | BioSample: %s | Isolate: %s\n", $4, $11, $6
+        printf "SPECS          | Status: %s | Type: %s | RefSeq: %s\n", $3, $9, $10
+        printf "GENOME         | %.0f Mb (total) | %.1f Mb (ungapped)\n", total_mb, ungapped_mb
+        printf "QUALITY        | ScaffoldN50: %s | Coverage: %s\n", $8, $7
+        printf "SUBMITTER      | %s\n", $5
+        printf "DATE           | Submitted: %s | Updated: %s\n", $12, $13
+        printf "FTP            | %s_genomic.fna.gz\n\n", $14
 
-    printf "-------------------- [ Index: %-4d ] --------------------\n", 1
-    printf "ID & ACC       | %s | %s\n", data["AssemblyName"], data["AssemblyAccession"]
-    printf "SOURCE         | Project: %s | BioSample: %s | Isolate: %s\n", data["BioprojectAccn"], data["BioSampleAccn"], data["Isolate"]
-    printf "SPECS          | Status: %s | Type: %s | RefSeq: %s\n", data["AssemblyStatus"], data["AssemblyType"], data["RefSeq_category"]
-
-    if (total_mb == "NA") printf "GENOME         | NA\n"
-    else printf "GENOME         | %.0f Mb (total)\n", total_mb
-
-    printf "QUALITY        | ScaffoldN50: %s | Coverage: %s\n", data["ScaffoldN50"], data["Coverage"]
-    printf "SUBMITTER      | %s\n", data["SubmitterOrganization"]
-    printf "DATE           | Submitted: %s | Updated: %s\n", data["SubmissionDate"], data["LastUpdateDate"]
-    printf "FTP            | %s_genomic.fna.gz\n\n", data["FtpPath_GenBank"]
-}
-' "$TEMP_DATA" | tee "$HISTORY_FILE"
+    }' "$TEMP_DATA" | tee "$HISTORY_FILE"
 
     echo "搜尋結果已存檔至: $HISTORY_FILE"
 
