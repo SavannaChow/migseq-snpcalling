@@ -17,3 +17,14 @@
 [2026-02-12 10:10:43] [from Darwin SavannaMacBookPro-9.local]  3096  ./fetch_genome.sh
 [2026-02-12 10:11:01] [from Darwin SavannaMacBookPro-9.local]  3096  ./fetch_genome.sh
 [2026-02-12 10:11:41] [from Darwin SavannaMacBookPro-9.local]  3096  ./fetch_genome.sh
+[2026-02-12 10:23:09] [from Darwin SavannaMacBookPro-9.local]  3096  ./fetch_genome.sh
+[2026-02-12 10:23:35] [from Darwin SavannaMacBookPro-9.local]  3096  ./fetch_genome.sh
+[2026-02-12 10:24:03] [from Darwin SavannaMacBookPro-9.local]  3097  esearch -db assembly -query "GCF_036669905.1[Assembly Accession]" \n| esummary \n| xtract -pattern DocumentSummary -def "NA" \n  -element AssemblyAccession AssemblyName AssemblyStatus \n           SubmissionDate LastUpdateDate Coverage ScaffoldN50 \n           AssemblyType RefSeq_category BioSampleAccn FtpPath_GenBank \n  -block Bioproj   -element BioprojectAccn \n  -block Biosource -element Isolate \n  -block DocumentSummary -element SubmitterOrganization \n  -block Stat -if @category -equals total_length -element Stat
+[2026-02-12 10:24:30] [from Darwin SavannaMacBookPro-9.local]  3098  esearch -db assembly -query "Acropora muricata" \n    | esummary \n    | xtract -pattern DocumentSummary -def "NA" \n      -element AssemblyAccession AssemblyName AssemblyStatus \n               BioprojectAccn SubmitterOrganization Isolate \n               Coverage ScaffoldN50 AssemblyType RefSeq_category BioSampleAccn \n               SubmissionDate LastUpdateDate FtpPath_GenBank \n      -block Stat -if @category -equals total_length -element Stat
+[2026-02-12 10:27:55] [from Darwin SavannaMacBookPro-9.local]  3099  ./fetch_genome.sh
+[2026-02-12 10:27:56] [from Darwin SavannaMacBookPro-9.local]  3099  ./fetch_genome.sh
+[2026-02-12 10:27:56] [from Darwin SavannaMacBookPro-9.local]  3099  ./fetch_genome.sh
+[2026-02-12 10:29:11] [from Darwin SavannaMacBookPro-9.local]  3099  ./fetch_genome.sh
+[2026-02-12 10:29:11] [from Darwin SavannaMacBookPro-9.local]  3099  ./fetch_genome.sh
+[2026-02-12 10:29:12] [from Darwin SavannaMacBookPro-9.local]  3099  ./fetch_genome.sh
+[2026-02-12 10:29:32] [from Darwin SavannaMacBookPro-9.local]  3100  esearch -db assembly -query "Acropora muricata" \n| esummary \n| xtract -pattern DocumentSummary -def "NA" \n  -element AssemblyAccession AssemblyName AssemblyStatus \n  -block Bioproj   -sep "," -element BioprojectAccn \n  -element SubmitterOrganization \n  -block Biosource -sep "," -element Isolate \n  -element Coverage ScaffoldN50 AssemblyType RefSeq_category BioSampleAccn \n           SubmissionDate LastUpdateDate FtpPath_GenBank \n  -block Stat -if @category -equals total_length -element Stat
