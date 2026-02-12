@@ -252,12 +252,24 @@ run_fetch_genome_module() {
     fi
     # --------------------------------------------------------
 
-    echo "目前系統中已定義的變數名稱與路徑 (Ref_XXX):"
-    if grep -q "^export Ref_" "$CONF_FILE"; then
-        grep "^export Ref_" "$CONF_FILE" | sed 's/export //g' | sed 's/=/  -->  /g'
+    # echo "目前系統中已定義的變數名稱與路徑 (Ref_XXX):"
+    # if grep -q "^export Ref_" "$CONF_FILE"; then
+    #     grep "^export Ref_" "$CONF_FILE" | sed 's/export //g' | sed 's/=/  -->  /g'
+    # else
+    #     echo "(目前尚無設定任何 Ref_ 變數)"
+    # fi
+
+    echo "目前系統中已定義的參考基因組變數與路徑:"
+    # 使用 grep 提取 export 行，並透過 ERE 篩選常見的基因組副檔名
+    if grep -E "^export .+=.+\.(fa|fasta|fna)\s*$" "$CONF_FILE" > /dev/null; then
+        grep -E "^export .+=.+\.(fa|fasta|fna)\s*$" "$CONF_FILE" | \
+        sed 's/export //g' | \
+        sed 's/=/  -->  /g'
     else
-        echo "(目前尚無設定任何 Ref_ 變數)"
+        echo "(目前設定檔中尚無有效的基因組變數)"
     fi
+    
+
     echo "--------------------------------------------------"
     echo "              請輸入參考基因組名稱                   "
     echo "--------------------------------------------------"
