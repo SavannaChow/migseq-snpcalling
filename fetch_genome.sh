@@ -38,6 +38,7 @@ fi
 # 進入搜尋與選擇迴圈
 while true; do
     # 1. 使用者輸入關鍵字
+    clear
     read -p "請輸入搜尋關鍵字 (物種名或 BioProject): " QUERY
 
     # 2. 執行檢索並暫存結果
@@ -51,10 +52,9 @@ while true; do
     esearch -db assembly -query "$QUERY" \
     | esummary \
     | xtract -pattern DocumentSummary -def "NA" \
-      -element AssemblyAccession AssemblyName AssemblyStatus \
-               BioprojectAccn SubmitterOrganization Isolate \
-               Coverage ScaffoldN50 AssemblyType RefSeq_category BioSampleAccn \
-               SubmissionDate LastUpdateDate FtpPath_GenBank \
+      -element AssemblyAccession AssemblyName AssemblyStatus AssemblyType \
+               ScaffoldN50 Coverage Isolate RefSeq_category \
+                SubmissionDate LastUpdateDate SubmitterOrganization FtpPath_GenBank \
       -block Stat -if @category -equals total_length -element Stat > "$TEMP_DATA"
 
     if [ ! -s "$TEMP_DATA" ]; then
@@ -63,20 +63,41 @@ while true; do
         continue
     fi
 
-    # 3. 視覺化格式輸出並同步存檔至 BASE_DIR
-    awk -F'\t' '{
-        total_mb     = $15 / 1000000
-        printf "-------------------- [ Index: %-4d ] --------------------\n", NR
-        printf "ID & ACC       | %s | %s\n", $2, $1
-        printf "SOURCE         | Project: %s | BioSample: %s | Isolate: %s\n", $4, $11, $6
-        printf "SPECS          | Status: %s | Type: %s | RefSeq: %s\n", $3, $9, $10
-        printf "GENOME         | %.0f Mb (total) | %.1f Mb (ungapped)\n", total_mb, ungapped_mb
-        printf "QUALITY        | ScaffoldN50: %s | Coverage: %s\n", $8, $7
-        printf "SUBMITTER      | %s\n", $5
-        printf "DATE           | Submitted: %s | Updated: %s\n", $12, $13
-        printf "FTP            | %s_genomic.fna.gz\n\n", $14
+# 1 AssemblyAccession
+# 2 AssemblyName
+# 3 AssemblyStatus
+# 4 AssemblyType
+# 5 ScaffoldN50
+# 6 Coverage
+# 7 Isolate
+# 8 RefSeq_category
+# 9 SubmissionDate
+# 10 LastUpdateDate
+# 11 SubmitterOrganization
+# 12 FtpPath_GenBank
+# 13 total_length
 
-    }' "$TEMP_DATA" | tee "$HISTORY_FILE"
+    # 3. 視覺化格式輸出並同步存檔至 BASE_DIR
+  awk -F'\t' '{
+    total_mb = $13 / 1000000
+
+    printf "-------------------- [ Index: %-4d ] --------------------\n", NR
+    # printf "AssemblyAccession: %s | AssemblyName: %s\n", $1, $2
+    # printf "AssemblyStatus: %s    | AssemblyType: %s\n", $3, $4
+    # printf "ScaffoldN50: %s | Coverage: %s | Isolate: %s | RefSeq_category: %s\n", $5, $6, $7, $8
+    # printf "SubmissionDate: %s | LastUpdateDate: %s\n", $9, $10
+    # printf "SubmitterOrganization: %s | Total Genome Size: %s MB\n",$11, total_mb
+printf "Submitter: %s(%s)\n", $11, $3
+printf "Assembly Accession | Assembly Name : %s | %s\n", $1, $2
+printf "Assembly Status    | Assembly Type : %s | %s\n", $3, $4
+printf "Scaffold N50       | Coverage      : %s | %s X\n", $5, $6
+printf "Isolate            | RefSeq Class  : %s | %s\n", $7, $8
+printf "Submission Date    | Update Date   : %s | %s\n", $9, $10
+printf "Total Genome Size  : %.0f MB\n", total_mb
+printf "NCBI FTP 路徑: %s\n\n", $12
+
+}' "$TEMP_DATA" | tee "$HISTORY_FILE"
+
 
     echo "搜尋結果已存檔至: $HISTORY_FILE"
 
@@ -103,9 +124,10 @@ while true; do
     break # 選擇成功，跳出迴圈進入下載程序
 done
 
-# 5. 獲取 FTP 路徑並下載
+# 5.獲取 FTP 路徑並下載
 echo "擷取 $ACCESSION FTP位置..."
-FTP_BASE=$(esearch -db assembly -query "$ACCESSION" | esummary | xtract -pattern DocumentSummary -element FtpPath_GenBank)
+# 修改處：加入 grep 過濾與 head -n 1，確保只抓取包含該 Accession 的單一路徑
+FTP_BASE=$(esearch -db assembly -query "$ACCESSION" | esummary | xtract -pattern DocumentSummary -element FtpPath_GenBank | tr ' ' '\n' | grep "$ACCESSION" | head -n 1)
 
 if [ -z "$FTP_BASE" ]; then
     echo "FTP path not found."
