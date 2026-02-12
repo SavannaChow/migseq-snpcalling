@@ -84,19 +84,6 @@ check_dependencies
 
 
 
-# ------------------------------------------------------------------------------
-# 2. 目錄與日誌初始化
-# ------------------------------------------------------------------------------
-CURRENT_TIME=$(date +"%Y%m%d_%H%M%S")
-LOG_DIR="00_Logs"; STAGE1="01_Trimming"; STAGE2="02_Alignment"; STAGE3="03_PCA_Analysis"
-STAGE4="04_Clone_Detection"; STAGE5="05_SNP_Calling"
-mkdir -p "$LOG_DIR" "$STAGE1/trim" "$STAGE1/fastp_report" "$STAGE2/bam" "$STAGE2/mapped_bam" "$STAGE2/mapping_results" "$STAGE3" "$STAGE4" "$STAGE5"
-
-LOG_FILE="$LOG_DIR/${PROJECT_NAME}_${CURRENT_TIME}.log"
-exec > >(tee -i "$LOG_FILE") 2>&1
-
-THREADS=$(nproc 2>/dev/null || sysctl -n hw.ncpu)
-JOBS=$(( THREADS / 4 )); [ "$JOBS" -lt 1 ] && JOBS=1
 
 
 # ------------------------------------------------------------------------------
@@ -119,6 +106,21 @@ read -p "請輸入:" PROJECT_NAME
 read -e -p "請輸入原始序列 (raw data) 資料夾路徑: " RAW_PATH
 [ ! -d "$RAW_PATH" ] && { echo "錯誤：找不到路徑 $RAW_PATH"; exit 1; }
 RAW_PATH=$(realpath "$RAW_PATH")
+
+
+# ------------------------------------------------------------------------------
+# 目錄與日誌初始化
+# ------------------------------------------------------------------------------
+CURRENT_TIME=$(date +"%Y%m%d_%H%M%S")
+LOG_DIR="00_Logs"; STAGE1="01_Trimming"; STAGE2="02_Alignment"; STAGE3="03_PCA_Analysis"
+STAGE4="04_Clone_Detection"; STAGE5="05_SNP_Calling"
+mkdir -p "$LOG_DIR" "$STAGE1/trim" "$STAGE1/fastp_report" "$STAGE2/bam" "$STAGE2/mapped_bam" "$STAGE2/mapping_results" "$STAGE3" "$STAGE4" "$STAGE5"
+
+LOG_FILE="$LOG_DIR/${PROJECT_NAME}_${CURRENT_TIME}.log"
+exec > >(tee -i "$LOG_FILE") 2>&1
+
+THREADS=$(nproc 2>/dev/null || sysctl -n hw.ncpu)
+JOBS=$(( THREADS / 4 )); [ "$JOBS" -lt 1 ] && JOBS=1
 
 
 
