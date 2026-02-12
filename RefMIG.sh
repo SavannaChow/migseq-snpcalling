@@ -4,7 +4,7 @@
 # ==============================================================================
 
 
-# --- [新增] 自動偵測 Shell 設定檔路徑 ---
+# --- 自動偵測 Shell 設定檔路徑 ---
 if [[ "$SHELL" == */zsh ]]; then
     CONF_FILE="$HOME/.zshrc"
 elif [[ "$OSTYPE" == "darwin"* ]]; then
@@ -16,6 +16,7 @@ fi
 # ---------------------------------------
 
 source "$CONF_FILE"
+
 
 
 # ------------------------------------------------------------------------------
@@ -80,6 +81,46 @@ check_dependencies() {
 }
 
 check_dependencies
+
+
+
+# ------------------------------------------------------------------------------
+# 2. 目錄與日誌初始化
+# ------------------------------------------------------------------------------
+CURRENT_TIME=$(date +"%Y%m%d_%H%M%S")
+LOG_DIR="00_Logs"; STAGE1="01_Trimming"; STAGE2="02_Alignment"; STAGE3="03_PCA_Analysis"
+STAGE4="04_Clone_Detection"; STAGE5="05_SNP_Calling"
+mkdir -p "$LOG_DIR" "$STAGE1/trim" "$STAGE1/fastp_report" "$STAGE2/bam" "$STAGE2/mapped_bam" "$STAGE2/mapping_results" "$STAGE3" "$STAGE4" "$STAGE5"
+
+LOG_FILE="$LOG_DIR/${PROJECT_NAME}_${CURRENT_TIME}.log"
+exec > >(tee -i "$LOG_FILE") 2>&1
+
+THREADS=$(nproc 2>/dev/null || sysctl -n hw.ncpu)
+JOBS=$(( THREADS / 4 )); [ "$JOBS" -lt 1 ] && JOBS=1
+
+
+# ------------------------------------------------------------------------------
+# 1. 優先參數輸入與流程選擇
+# ==============================================================================
+#   MIG-seq Genomic Analysis Pipeline 2026
+#   Biodiversity Research Center, Academia Sinica
+# ==============================================================================
+clear
+echo "==========================================================================="
+echo "   MIG-seq Genomic Analysis Pipeline (Refgenome mapping)"
+echo "   開發者：Savanna Chow (savanna201@gmail.com) 使用 Gemini 協助開發"
+echo "   分析邏輯基於 https://github.com/jamesfifer/JapanRE"
+echo "   Credit: AllenChen's lab, Biodiversity Research Center, Academia Sinica"
+echo "==========================================================================="
+echo "                                                       "
+echo "請輸入專案名稱,不要有特殊或空白字元"
+echo "*分析產生的檔案都將以專案名稱為開頭"
+read -p "請輸入:" PROJECT_NAME
+read -e -p "請輸入原始序列 (raw data) 資料夾路徑: " RAW_PATH
+[ ! -d "$RAW_PATH" ] && { echo "錯誤：找不到路徑 $RAW_PATH"; exit 1; }
+RAW_PATH=$(realpath "$RAW_PATH")
+
+
 
 # ------------------------------------------------------------------------------
 # 內嵌模組: Genome Fetcher
@@ -357,28 +398,7 @@ ask_to_run() {
     fi
 }
 
-# ------------------------------------------------------------------------------
-# 1. 優先參數輸入與流程選擇
-# ------------------------------------------------------------------------------
-# 1.1 基本資訊
-# ==============================================================================
-#   MIG-seq Genomic Analysis Pipeline 2026
-#   Biodiversity Research Center, Academia Sinica
-# ==============================================================================
-clear
-echo "==========================================================================="
-echo "   MIG-seq Genomic Analysis Pipeline (Refgenome mapping)"
-echo "   開發者：Savanna Chow (savanna201@gmail.com) 使用 Gemini 協助開發"
-echo "   分析邏輯基於 https://github.com/jamesfifer/JapanRE"
-echo "   Credit: AllenChen's lab, Biodiversity Research Center, Academia Sinica"
-echo "==========================================================================="
-echo "                                                       "
-echo "請輸入專案名稱,不要有特殊或空白字元"
-echo "*分析產生的檔案都將以專案名稱為開頭"
-read -p "請輸入:" PROJECT_NAME
-read -e -p "請輸入原始序列 (raw data) 資料夾路徑: " RAW_PATH
-[ ! -d "$RAW_PATH" ] && { echo "錯誤：找不到路徑 $RAW_PATH"; exit 1; }
-RAW_PATH=$(realpath "$RAW_PATH")
+
 
 # 1.2 參考基因組設定 (整合下載選單)
 # ==============================================================================
@@ -543,19 +563,6 @@ case "$RUN_CHOICE" in
        [[ "$RUN_S6" == "q" ]] && { echo "使用者取消操作。"; exit 0; }
        ;;
 esac
-# ------------------------------------------------------------------------------
-# 2. 目錄與日誌初始化
-# ------------------------------------------------------------------------------
-CURRENT_TIME=$(date +"%Y%m%d_%H%M%S")
-LOG_DIR="00_Logs"; STAGE1="01_Trimming"; STAGE2="02_Alignment"; STAGE3="03_PCA_Analysis"
-STAGE4="04_Clone_Detection"; STAGE5="05_SNP_Calling"
-mkdir -p "$LOG_DIR" "$STAGE1/trim" "$STAGE1/fastp_report" "$STAGE2/bam" "$STAGE2/mapped_bam" "$STAGE2/mapping_results" "$STAGE3" "$STAGE4" "$STAGE5"
-
-LOG_FILE="$LOG_DIR/${PROJECT_NAME}_${CURRENT_TIME}.log"
-exec > >(tee -i "$LOG_FILE") 2>&1
-
-THREADS=$(nproc 2>/dev/null || sysctl -n hw.ncpu)
-JOBS=$(( THREADS / 4 )); [ "$JOBS" -lt 1 ] && JOBS=1
 
 # 2. 目錄與日誌初始化後
 echo "======================================================="
