@@ -373,9 +373,10 @@ while true; do
     echo "------------------------"
     echo "d) 下載/新增參考基因組 (呼叫 NCBI Fetcher)"
     echo "$MANUAL_OPTION) 手動輸入絕對路徑"
+    echo "q) 離開程式"
     echo "------------------------"
 
-    read -p "請選擇參考基因組 (1-$MANUAL_OPTION 或 d): " REF_CHOICE
+    read -p "請選擇參考基因組 (1-$MANUAL_OPTION, d, 或 q): " REF_CHOICE
 
     # 分支邏輯
     if [[ "$REF_CHOICE" == "d" || "$REF_CHOICE" == "D" ]]; then
@@ -386,6 +387,9 @@ while true; do
         echo ">>> 返回主選單，正在刷新參考基因組清單..."
         # 不 break，continue 回到 while 開頭
         continue
+    elif [[ "$REF_CHOICE" == "q" || "$REF_CHOICE" == "Q" ]]; then
+        echo "使用者取消操作，程式結束。"
+        exit 0
     fi
 
     # 驗證輸入為純數字且在選項範圍內
@@ -393,7 +397,11 @@ while true; do
         REF_GENOME="${MAPVAL[$((REF_CHOICE-1))]}"
         break # 選擇成功，跳出迴圈
     elif [ "$REF_CHOICE" -eq "$MANUAL_OPTION" ]; then
-        read -e -p "請輸入絕對路徑: " REF_GENOME
+        read -e -p "請輸入絕對路徑 (或輸入 'b' 返回選單): " REF_GENOME
+        if [[ "$REF_GENOME" == "b" || "$REF_GENOME" == "B" ]]; then
+            echo "返回選單..."
+            continue
+        fi
         break # 選擇成功，跳出迴圈
     else
         echo "錯誤：無效的選擇。"
@@ -433,12 +441,21 @@ echo "請選擇分析運行模式："
 echo "1) 自動模式 (預先設定篩選策略，遇到決策點不中斷)"
 echo "2) 互動模式 (各階段結束後，手動決定是否移除樣本)"
 echo ""
-read -p "請輸入選項 (1 或 2): " RUN_MODE
+read -p "請輸入選項 (1, 2, 或 q 離開): " RUN_MODE
+
+if [[ "$RUN_MODE" == "q" || "$RUN_MODE" == "Q" ]]; then
+    echo "使用者取消操作，程式結束。"
+    exit 0
+fi
 
 if [ "$RUN_MODE" == "1" ]; then
     echo "[模式選擇：自動模式]"
-    read -p "  > 偵測到 PCA Outlier 時處理方式 (1:移除, 2:保留): " AUTO_PCA_CHOICE
-    read -p "  > 偵測到 Clone 樣本時處理方式 (1:移除, 2:保留): " AUTO_CLONE_CHOICE
+    read -p "  > 偵測到 PCA Outlier 時處理方式 (1:移除, 2:保留, q:離開): " AUTO_PCA_CHOICE
+    [[ "$AUTO_PCA_CHOICE" == "q" || "$AUTO_PCA_CHOICE" == "Q" ]] && { echo "使用者取消操作。"; exit 0; }
+
+    read -p "  > 偵測到 Clone 樣本時處理方式 (1:移除, 2:保留, q:離開): " AUTO_CLONE_CHOICE
+    [[ "$AUTO_CLONE_CHOICE" == "q" || "$AUTO_CLONE_CHOICE" == "Q" ]] && { echo "使用者取消操作。"; exit 0; }
+
     echo "預設 PCA 決策: $AUTO_PCA_CHOICE"
     echo "預設 Clone 決策: $AUTO_CLONE_CHOICE"
 else
@@ -458,7 +475,13 @@ echo "4) 僅執行 LD Pruning (分析連鎖不平衡位點)"
 echo "5) 執行最終 SNP Calling (基於現有無LD位點)"
 echo "6) 自定義流程"
 echo ""
-read -p "選擇運行範圍: " RUN_CHOICE
+read -p "選擇運行範圍 (或輸入 q 離開): " RUN_CHOICE
+
+if [[ "$RUN_CHOICE" == "q" || "$RUN_CHOICE" == "Q" ]]; then
+    echo "使用者取消操作，程式結束。"
+    exit 0
+fi
+
 echo ""
 case "$RUN_CHOICE" in
     1) RUN_S1=y; RUN_S2=y; RUN_S3=y; RUN_S4=y; RUN_S5=y; RUN_S6=y ;;
@@ -467,12 +490,18 @@ case "$RUN_CHOICE" in
     4) RUN_S1=n; RUN_S2=n; RUN_S3=n; RUN_S4=n; RUN_S5=y; RUN_S6=n ;;
     5) RUN_S1=n; RUN_S2=n; RUN_S3=n; RUN_S4=n; RUN_S5=n; RUN_S6=y ;;
     *) 
-       read -p "執行 Stage 1 Trimming? (y/n): " RUN_S1
-       read -p "執行 Stage 2 Alignment? (y/n): " RUN_S2
-       read -p "執行 Stage 3 PCA Outlier Filtering? (y/n): " RUN_S3
-       read -p "執行 Stage 4 Clone Filtering? (y/n): " RUN_S4
-       read -p "執行 Stage 5 LD Pruning (Generate Site Map)? (y/n): " RUN_S5
-       read -p "執行 Stage 6 Final SNP Calling (Apply Map)? (y/n): " RUN_S6
+       read -p "執行 Stage 1 Trimming? (y/n, 或 q 離開): " RUN_S1
+       [[ "$RUN_S1" == "q" ]] && { echo "使用者取消操作。"; exit 0; }
+       read -p "執行 Stage 2 Alignment? (y/n, 或 q 離開): " RUN_S2
+       [[ "$RUN_S2" == "q" ]] && { echo "使用者取消操作。"; exit 0; }
+       read -p "執行 Stage 3 PCA Outlier Filtering? (y/n, 或 q 離開): " RUN_S3
+       [[ "$RUN_S3" == "q" ]] && { echo "使用者取消操作。"; exit 0; }
+       read -p "執行 Stage 4 Clone Filtering? (y/n, 或 q 離開): " RUN_S4
+       [[ "$RUN_S4" == "q" ]] && { echo "使用者取消操作。"; exit 0; }
+       read -p "執行 Stage 5 LD Pruning (Generate Site Map)? (y/n, 或 q 離開): " RUN_S5
+       [[ "$RUN_S5" == "q" ]] && { echo "使用者取消操作。"; exit 0; }
+       read -p "執行 Stage 6 Final SNP Calling (Apply Map)? (y/n, 或 q 離開): " RUN_S6
+       [[ "$RUN_S6" == "q" ]] && { echo "使用者取消操作。"; exit 0; }
        ;;
 esac
 # ------------------------------------------------------------------------------
@@ -791,7 +820,12 @@ R_CODE
                 PCA_DECISION=$AUTO_PCA_CHOICE
                 echo "自動模式：套用預設選項 ($PCA_DECISION)"
             else
-                read -p "是否移除離群樣本？(1:移除, 2:保留): " PCA_DECISION < /dev/tty
+                read -p "是否移除離群樣本？(1:移除, 2:保留, q:離開): " PCA_DECISION < /dev/tty
+            fi
+
+            if [[ "$PCA_DECISION" == "q" || "$PCA_DECISION" == "Q" ]]; then
+                echo "使用者選擇離開，分析中止。"
+                exit 0
             fi
 
             if [ "$PCA_DECISION" == "1" ]; then
@@ -946,7 +980,12 @@ R_CODE
                 CLONE_DECISION=$AUTO_CLONE_CHOICE
                 echo "自動模式：套用預設選項 ($CLONE_DECISION)"
             else
-                read -p "是否移除上述Clone樣本？(1:移除, 2:保留): " CLONE_DECISION < /dev/tty
+                read -p "是否移除上述Clone樣本？(1:移除, 2:保留, q:離開): " CLONE_DECISION < /dev/tty
+            fi
+
+            if [[ "$CLONE_DECISION" == "q" || "$CLONE_DECISION" == "Q" ]]; then
+                echo "使用者選擇離開，分析中止。"
+                exit 0
             fi
 
             if [ "$CLONE_DECISION" == "1" ]; then
@@ -999,14 +1038,21 @@ if [[ "$RUN_S5" == "y" || "$RUN_S6" == "y" ]]; then
                 
                 printf "%2d) %s %s\n" "$((i+1))" "${FOUND_LISTS[$i]}" "$note"
             done
-            echo " q) 手動輸入其他路徑(副檔名必須為bamfile)"
+            echo " m) 手動輸入其他路徑"
+            echo " q) 離開程式"
             
-            read -p "請輸入選項 (1-${#FOUND_LISTS[@]} 或 q): " FILE_CHOICE < /dev/tty
+            read -p "請輸入選項 (1-${#FOUND_LISTS[@]}, m, 或 q): " FILE_CHOICE < /dev/tty
             
-            if [[ "$FILE_CHOICE" =~ ^[0-9]+$ ]] && [ "$FILE_CHOICE" -le "${#FOUND_LISTS[@]}" ]; then
+            if [[ "$FILE_CHOICE" == "q" || "$FILE_CHOICE" == "Q" ]]; then
+                echo "使用者取消操作，程式結束。"
+                exit 0
+            elif [[ "$FILE_CHOICE" =~ ^[0-9]+$ ]] && [ "$FILE_CHOICE" -ge 1 ] && [ "$FILE_CHOICE" -le "${#FOUND_LISTS[@]}" ]; then
                 BAM_LIST="${FOUND_LISTS[$((FILE_CHOICE-1))]}"
-            else
+            elif [[ "$FILE_CHOICE" == "m" || "$FILE_CHOICE" == "M" ]]; then
                 read -e -p "請輸入自訂清單路徑: " BAM_LIST < /dev/tty
+            else
+                echo "錯誤：無效的選擇。程式中止。"
+                exit 1
             fi
         fi
     fi
