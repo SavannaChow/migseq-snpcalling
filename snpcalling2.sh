@@ -1,7 +1,8 @@
 #!/bin/bash
 # ==============================================================================
-# MIG Analysis Full Pipeline - Smart Hybrid Mode (v8.12)
+# MIG Analysis Full Pipeline - Smart Hybrid Mode (v1.6) -- RefMIG
 # ==============================================================================
+
 
 # --- [新增] 自動偵測 Shell 設定檔路徑 ---
 if [[ "$SHELL" == */zsh ]]; then
