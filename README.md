@@ -240,7 +240,6 @@ Each final BAM file:
 
 ==================================================================
 
-## Stage 3 – Mapping Summary Generation and PCA-based Sample Quality Filtering
 
 ## Stage 3 – Mapping Summary Generation and PCA-based Sample Quality Filtering
 
