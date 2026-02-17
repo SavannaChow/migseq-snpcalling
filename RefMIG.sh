@@ -1,8 +1,7 @@
 #!/bin/bash
 # ==============================================================================
-# MIG Analysis Full Pipeline - Smart Hybrid Mode (v1.6) -- RefMIG
+# MIG Analysis Full Pipeline - Smart Hybrid Mode (v1.7) -- RefMIG
 # ==============================================================================
-
 
 # --- 自動偵測 Shell 設定檔路徑 ---
 if [[ "$SHELL" == */zsh ]]; then
@@ -13,11 +12,7 @@ else
     CONF_FILE="$HOME/.bashrc"
 fi
 [ ! -f "$CONF_FILE" ] && touch "$CONF_FILE"
-# ---------------------------------------
-
 source "$CONF_FILE"
-
-
 
 # ------------------------------------------------------------------------------
 # 環境依賴檢查 (Dependency Check)
@@ -31,7 +26,7 @@ check_dependencies() {
     fi
 
     echo "chech env dependencies"
-    
+
     local -A tools=(
         ["fastp"]="conda install -c bioconda fastp"
         ["bwa"]="sudo apt-get install bwa"
@@ -80,96 +75,59 @@ check_dependencies() {
     fi
 }
 
-check_dependencies
-
-
-
-
-# ==============================================================================
-#   MIG-seq Genomic Analysis Pipeline 2026
-#   Biodiversity Research Center, Academia Sinica
-# ==============================================================================
-clear
+# ------------------------------------------------------------------------------
+# 常數與共用設定
+# ------------------------------------------------------------------------------
 HEADER_TEXT="===========================================================================
    MIG-seq Genomic Analysis Pipeline (Refgenome mapping)
    開發者：Savanna Chow (savanna201@gmail.com) 使用 Gemini 協助開發
    分析邏輯基於 https://github.com/jamesfifer/JapanRE
    Credit: AllenChen's lab, Biodiversity Research Center, Academia Sinica
 ==========================================================================="
-echo "$HEADER_TEXT"
-echo "                                                       "
-echo "請輸入專案名稱,不要有特殊或空白字元"
-echo "*分析產生的檔案都將以專案名稱為開頭"
-read -p "請輸入:" PROJECT_NAME
-# ------------------------------------------------------------------------------
-# 立即初始化日誌
-# ------------------------------------------------------------------------------
-CURRENT_TIME=$(date +"%Y%m%d_%H%M%S")
-LOG_DIR="00_Logs"
-mkdir -p "$LOG_DIR"
-LOG_FILE="$LOG_DIR/${PROJECT_NAME}_${CURRENT_TIME}.log"
 
-echo "$HEADER_TEXT" > "$LOG_FILE"
-echo "專案名稱: $PROJECT_NAME" >> "$LOG_FILE"
-echo "啟動時間: $(date)" >> "$LOG_FILE"
-echo "-------------------------------------------------------" >> "$LOG_FILE"
-
-# 啟動 exec 紀錄後續所有輸出
-exec > >(tee -i -a "$LOG_FILE") 2>&1
-
-read -e -p "請輸入原始序列 (raw data) 資料夾路徑: " RAW_PATH
-[ ! -d "$RAW_PATH" ] && { echo "錯誤：找不到路徑 $RAW_PATH"; exit 1; }
-RAW_PATH=$(realpath "$RAW_PATH")
-
-# ------------------------------------------------------------------------------
-# 目錄與日誌初始化
-# ------------------------------------------------------------------------------
-STAGE1="01_Trimming"; STAGE2="02_Alignment"; STAGE3="03_PCA_Analysis"
-STAGE4="04_Clone_Detection"; STAGE5="05_SNP_Calling"
-mkdir -p "$STAGE1/trim" "$STAGE1/fastp_report" "$STAGE2/bam" "$STAGE2/mapped_bam" "$STAGE2/mapping_results" "$STAGE3" "$STAGE4" "$STAGE5"
+STAGE1="01_Trimming"
+STAGE2="02_Alignment"
+STAGE3="03_PCA_Analysis"
+STAGE4="04_Clone_Detection"
+STAGE5="05_SNP_Calling"
 
 THREADS=$(nproc 2>/dev/null || sysctl -n hw.ncpu)
 JOBS=$(( THREADS / 4 )); [ "$JOBS" -lt 1 ] && JOBS=1
 
-# 2. 目錄與日誌初始化後
-echo "======================================================="
-echo "  分析配置"
-echo "-------------------------------------------------------"
-echo ""
-echo "  啟動時間   : $(date)"
-echo "  專案名稱   : $PROJECT_NAME"
-echo "  執行執行緒 : $THREADS (Jobs: $JOBS)"
-echo "  原始路徑   : $RAW_PATH"
-echo "  參考基因組 : $REF_GENOME"
-echo ""
-echo "  日誌檔案   : $LOG_FILE"
-echo "======================================================="
-echo ""
+RUN_S1=n; RUN_S2=n; RUN_S3=n; RUN_S4=n; RUN_S5=n; RUN_S6=n
+RUN_MODE="2"
+AUTO_PCA_CHOICE="2"
+AUTO_CLONE_CHOICE="2"
+CHAIN_STAGES=false
+RUN_SCOPE=""
 
-
-
+PROJECT_NAME=""
+BASE_PROJECT_NAME=""
+RAW_PATH=""
+REF_GENOME=""
+BAM_LIST=""
+SUMMARY_INPUT_DIR=""
+MAPPED_BAM_DIR=""
+TRIM_INPUT_DIR=""
+LD_SITES_INPUT=""
 
 # ------------------------------------------------------------------------------
-# 內嵌模組: Genome Fetcher
+# 內嵌模組: Genome Fetcher (原邏輯保留)
 # ------------------------------------------------------------------------------
 run_fetch_genome_module() {
     echo "======================================================="
     echo "啟動 NCBI Genome 下載模組"
     echo "======================================================="
 
-    # 設定基礎下載目錄
     BASE_DIR=~/RefGenome
     mkdir -p "$BASE_DIR"
 
-    # 設定隱藏標記檔路徑
     ENV_CHECK_FILE_FG="$BASE_DIR/.env_verified"
     REQUIRED_CMDS=("esearch" "bwa" "samtools" "curl" "gunzip")
 
-    # 環境偵測邏輯
     if [[ ! -f "$ENV_CHECK_FILE_FG" ]]; then
         echo "Initializing environment check for Genome Fetcher..."
 
-        # 擴展可能的軟體路徑
         EXTRA_PATHS=("/usr/local/bin" "/opt/bin" "$HOME/bin" "$HOME/edirect")
         for p in "${EXTRA_PATHS[@]}"; do
             [[ -d "$p" ]] && export PATH="$p:$PATH"
@@ -183,30 +141,25 @@ run_fetch_genome_module() {
                     export PATH="$HOME/edirect:$PATH"
                 else
                     echo "Error: Required command '$cmd' is missing."
-                    return 1 # 改為 return 以免結束主程式
+                    return 1
                 fi
             fi
         done
 
-        # 建立隱藏標記檔
         touch "$ENV_CHECK_FILE_FG"
         echo "Environment verified and cached."
     fi
 
-    # 進入搜尋與選擇迴圈
     while true; do
-        # 1. 使用者輸入關鍵字
-        # 不使用 clear 以保留主程式上下文
         read -p "請輸入搜尋關鍵字 (物種名或 BioProject, 輸入 q 離開): " QUERY
-        
+
         if [[ "$QUERY" == "q" || "$QUERY" == "Q" ]]; then
             echo "取消下載。"
             return 0
         fi
 
-        # 2. 執行檢索並暫存結果
         TEMP_DATA=$(mktemp)
-        
+
         TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
         HISTORY_FILE="$BASE_DIR/SearchRecord_${QUERY// /_}_${TIMESTAMP}.txt"
 
@@ -225,7 +178,6 @@ run_fetch_genome_module() {
             continue
         fi
 
-        # 3. 視覺化格式輸出
         awk -F'\t' '{
             total_mb = $13 / 1000000
             printf "-------------------- [ Index: %-4d ] --------------------\n", NR
@@ -241,7 +193,6 @@ run_fetch_genome_module() {
 
         echo "搜尋結果已存檔至: $HISTORY_FILE"
 
-        # 4. 互動式選擇
         read -p "選擇要下載的Genome編號 (輸入 r 重新搜尋, q 離開): " INDEX
 
         if [[ "$INDEX" == "q" ]]; then
@@ -265,10 +216,9 @@ run_fetch_genome_module() {
 
         ACCESSION=$(echo "$SELECTED_LINE" | cut -f1)
         rm "$TEMP_DATA"
-        break 
+        break
     done
 
-    # 5.獲取 FTP 路徑並下載
     echo "擷取 $ACCESSION FTP位置..."
     FTP_BASE=$(esearch -db assembly -query "$ACCESSION" | esummary | xtract -pattern DocumentSummary -element FtpPath_GenBank | tr ' ' '\n' | grep "$ACCESSION" | head -n 1 | sed 's|^ftp://|https://|')
 
@@ -295,23 +245,17 @@ run_fetch_genome_module() {
         return 0
     fi
 
-    # 6. 設定環境變數
     clear
-    
-    # --- 顯示剛才下載的基因組資訊 ---
+
     if [ -n "$SELECTED_LINE" ]; then
         echo "=================================================="
         echo "           [ 已下載基因組詳細資訊 ]"
         echo "--------------------------------------------------"
-        # 提取資訊並清理特殊字元
         RAW_ACC=$(echo "$SELECTED_LINE" | awk -F'\t' '{print $1}')
         RAW_NAME=$(echo "$SELECTED_LINE" | awk -F'\t' '{print $2}')
 
-        # 將所有非英數字元 (包含 . - 空白) 替換為下底線，並壓縮連續的下底線
         CLEAN_ACC=$(echo "$RAW_ACC" | sed 's/[^a-zA-Z0-9]/_/g' | sed 's/_\+/_/g')
         CLEAN_NAME=$(echo "$RAW_NAME" | sed 's/[^a-zA-Z0-9]/_/g' | sed 's/_\+/_/g')
-        
-        # 組合建議的變數名稱
         SUGGESTED_INPUT="${CLEAN_NAME}_${CLEAN_ACC}"
 
         echo "$SELECTED_LINE" | awk -F'\t' '{
@@ -329,19 +273,10 @@ run_fetch_genome_module() {
         }'
         echo "=================================================="
     fi
-    # --------------------------------------------------------
 
-    # echo "目前系統中已定義的變數名稱與路徑 (Ref_XXX):"
-    # if grep -q "^export Ref_" "$CONF_FILE"; then
-    #     grep "^export Ref_" "$CONF_FILE" | sed 's/export //g' | sed 's/=/  -->  /g'
-    # else
-    #     echo "(目前尚無設定任何 Ref_ 變數)"
-    # fi
     source "$CONF_FILE"
     MAPFILE=()
     MAPVAL=()
-
-    # 直接抓取環境變數中以 .fa, .fasta, .fna 結尾的路徑
     while IFS='=' read -r name value; do
         if [[ "$value" =~ \.(fa|fasta|fna)$ ]]; then
             MAPFILE+=("$name")
@@ -355,7 +290,6 @@ run_fetch_genome_module() {
         echo "$((i+1))) \$${MAPFILE[$i]} (${MAPVAL[$i]})"
     done
     echo ""
-    echo ""
     echo "--------------------------------------------------"
     echo "              請輸入參考基因組名稱                   "
     echo "--------------------------------------------------"
@@ -363,28 +297,22 @@ run_fetch_genome_module() {
     echo "嚴禁包含小數點（.）、破折號（-）或其他標點符號"
     echo "只能包含字母（a-z, A-Z）、數字（0-9）以及下底線（_）。"
     echo "--------------------------------------------------"
-    # 給使用者自己輸入版本read -p "REF_" USER_INPUT
-    # 以下自動帶入建議版本，讓使用者確認或修改，預設直接帶入建議值
     echo "請命名剛剛下載好的參考基因組名稱"
     echo "或是按Enter直接無腦使用建議值-> ${SUGGESTED_INPUT}"
     read -p "請輸入：" USER_INPUT
-    
-    # 如果使用者直接按 Enter，就使用自動生成的建議名稱
+
     if [ -z "$USER_INPUT" ]; then
         FINAL_INPUT="$SUGGESTED_INPUT"
     else
-        # 即使是使用者輸入，也強制過濾一次特殊字元確保安全
         FINAL_INPUT=$(echo "$USER_INPUT" | sed 's/[^a-zA-Z0-9]/_/g' | sed 's/_\+/_/g')
     fi
 
     ENV_VAR="Ref_${FINAL_INPUT}"
     FNA_FILE="$TARGET_DIR/${FILE_NAME}_genomic.fna"
     ABS_PATH=$(realpath "$FNA_FILE")
-    
+
     echo "最終變數名稱將設定為: $ENV_VAR"
 
-
-    # 7. 解壓縮與建立索引
     echo "解壓縮..."
     gunzip -f "$TARGET_DIR/$DOWNLOAD_FILE"
 
@@ -392,11 +320,9 @@ run_fetch_genome_module() {
     echo "bwa index $ABS_PATH"
     bwa index "$ABS_PATH"
     echo "寫入環境變數$CONF_FILE"
-    # 寫入 .bashrc
     echo "export $ENV_VAR=\"$ABS_PATH\"" >> "$CONF_FILE"
-    # 這裡 source 只對當前 shell 有效，主程式需在外部再次 source
     source "$CONF_FILE"
-    echo "環境變數 '$ENV_VAR' 已加入 "$CONF_FILE"。"
+    echo "環境變數 '$ENV_VAR' 已加入 $CONF_FILE。"
     echo "--------------------------------------------------"
     echo "Process complete."
     echo "Genome path: $ABS_PATH"
@@ -405,16 +331,20 @@ run_fetch_genome_module() {
     exec $SHELL
 }
 
-
 # ------------------------------------------------------------------------------
-# 0. 輔助函式定義
+# 輔助函式
 # ------------------------------------------------------------------------------
 ask_to_run() {
     local step_name=$1
     local check_target=$2
     local skip_var_name=$3
     local exists=false
-    if [ -f "$check_target" ]; then exists=true; elif [ -d "$check_target" ] && [ "$(ls -A "$check_target" 2>/dev/null)" ]; then exists=true; fi
+    if [ -f "$check_target" ]; then
+        exists=true
+    elif [ -d "$check_target" ] && [ "$(ls -A "$check_target" 2>/dev/null)" ]; then
+        exists=true
+    fi
+
     if [ "$exists" = true ]; then
         echo "-------------------------------------------------------"
         echo "[偵測到已存在的分析結果]: $step_name"
@@ -425,346 +355,421 @@ ask_to_run() {
     fi
 }
 
+setup_output_dirs() {
+    mkdir -p "$STAGE1/trim" "$STAGE1/fastp_report" "$STAGE2/bam" "$STAGE2/mapped_bam" "$STAGE2/mapping_results" "$STAGE3" "$STAGE4" "$STAGE5"
+}
 
+start_logging() {
+    local current_time
+    current_time=$(date +"%Y%m%d_%H%M%S")
+    LOG_DIR="00_Logs"
+    mkdir -p "$LOG_DIR"
+    LOG_FILE="$LOG_DIR/${PROJECT_NAME}_${current_time}.log"
 
-# 1.2 參考基因組設定 (整合下載選單)
-# ==============================================================================
-while true; do
-    # 每次迴圈重新載入 .bashrc 以獲取最新的 Ref_ 變數
-    source "$CONF_FILE"
-    MAPFILE=()
-    MAPVAL=()
+    echo "$HEADER_TEXT" > "$LOG_FILE"
+    echo "專案名稱: $PROJECT_NAME" >> "$LOG_FILE"
+    echo "啟動時間: $(date)" >> "$LOG_FILE"
+    echo "-------------------------------------------------------" >> "$LOG_FILE"
 
-    # 過濾環境變數中以 .fa, .fasta, .fna 結尾的路徑
-    while IFS='=' read -r name value; do
-        if [[ "$value" =~ \.(fa|fasta|fna)$ ]]; then
-            MAPFILE+=("$name")
-            MAPVAL+=("$value")
-        fi
-    done < <(env)
+    exec > >(tee -i -a "$LOG_FILE") 2>&1
+}
 
+print_runtime_config() {
+    echo "======================================================="
+    echo "  分析配置"
+    echo "-------------------------------------------------------"
     echo ""
-    echo "--- 可用的參考基因組 ---"
-    for i in "${!MAPFILE[@]}"; do
-        echo "$((i+1))) \$${MAPFILE[$i]} (${MAPVAL[$i]})"
-    done
+    echo "  啟動時間   : $(date)"
+    echo "  專案名稱   : $PROJECT_NAME"
+    echo "  執行執行緒 : $THREADS (Jobs: $JOBS)"
+    [ -n "$RAW_PATH" ] && echo "  原始路徑   : $RAW_PATH"
+    [ -n "$REF_GENOME" ] && echo "  參考基因組 : $REF_GENOME"
+    echo "  日誌檔案   : $LOG_FILE"
+    echo "  流程串接   : $([[ "$CHAIN_STAGES" == true ]] && echo "啟用(完整流程)" || echo "停用(單獨分析)")"
+    echo "======================================================="
+    echo ""
+}
 
-    MANUAL_OPTION=$(( ${#MAPFILE[@]} + 1 ))
-    echo "------------------------"
-    echo "d) 下載/新增參考基因組 (呼叫 NCBI Fetcher)"
-    echo "$MANUAL_OPTION) 手動輸入絕對路徑"
-    echo "q) 離開程式"
-    echo "------------------------"
+select_analysis_scope() {
+    clear
+    echo "$HEADER_TEXT"
+    echo ""
+    echo "======================================================="
+    echo "  請先選擇要做哪種分析"
+    echo "======================================================="
+    echo "1) 執行完整分析 (Stage 1-6, 會串接上一階段輸出)"
+    echo "2) 只跑 Stage 1: Fastp Trimming"
+    echo "3) 只跑 Stage 2: BWA Alignment"
+    echo "4) 只跑 Stage 3: PCA Outlier 分析"
+    echo "5) 只跑 Stage 4: Clone Detection"
+    echo "6) 只跑 Stage 5: LD Pruning"
+    echo "7) 只跑 Stage 6: Final SNP Calling"
+    echo "8) 自定義多階段 (不自動串接)"
+    echo "q) 離開"
+    echo ""
+    read -p "選擇分析範圍: " RUN_SCOPE
 
-    read -p "請選擇參考基因組 (1-$MANUAL_OPTION, d, 或 q): " REF_CHOICE
-
-    # 分支邏輯
-    if [[ "$REF_CHOICE" == "d" || "$REF_CHOICE" == "D" ]]; then
-        # 呼叫內嵌的下載模組
-        run_fetch_genome_module
-        
-        echo ""
-        echo ">>> 返回主選單，正在刷新參考基因組清單..."
-        # 不 break，continue 回到 while 開頭
-        continue
-    elif [[ "$REF_CHOICE" == "q" || "$REF_CHOICE" == "Q" ]]; then
+    if [[ "$RUN_SCOPE" == "q" || "$RUN_SCOPE" == "Q" ]]; then
         echo "使用者取消操作，程式結束。"
         exit 0
     fi
 
-    # 驗證輸入為純數字且在選項範圍內
-    if [[ "$REF_CHOICE" =~ ^[0-9]+$ ]] && [ "$REF_CHOICE" -ge 1 ] && [ "$REF_CHOICE" -le "${#MAPFILE[@]}" ]; then
-        REF_GENOME="${MAPVAL[$((REF_CHOICE-1))]}"
-        break # 選擇成功，跳出迴圈
-    elif [ "$REF_CHOICE" -eq "$MANUAL_OPTION" ]; then
-        read -e -p "請輸入絕對路徑 (或輸入 'b' 返回選單): " REF_GENOME
-        if [[ "$REF_GENOME" == "b" || "$REF_GENOME" == "B" ]]; then
-            echo "返回選單..."
-            continue
-        fi
-        break # 選擇成功，跳出迴圈
+    case "$RUN_SCOPE" in
+        1)
+            RUN_S1=y; RUN_S2=y; RUN_S3=y; RUN_S4=y; RUN_S5=y; RUN_S6=y
+            CHAIN_STAGES=true
+            ;;
+        2) RUN_S1=y ;;
+        3) RUN_S2=y ;;
+        4) RUN_S3=y ;;
+        5) RUN_S4=y ;;
+        6) RUN_S5=y ;;
+        7) RUN_S6=y ;;
+        8)
+            read -p "執行 Stage 1 Trimming? (y/n): " RUN_S1
+            read -p "執行 Stage 2 Alignment? (y/n): " RUN_S2
+            read -p "執行 Stage 3 PCA Outlier Filtering? (y/n): " RUN_S3
+            read -p "執行 Stage 4 Clone Filtering? (y/n): " RUN_S4
+            read -p "執行 Stage 5 LD Pruning? (y/n): " RUN_S5
+            read -p "執行 Stage 6 Final SNP Calling? (y/n): " RUN_S6
+            CHAIN_STAGES=false
+            ;;
+        *)
+            echo "錯誤：無效選項。"
+            exit 1
+            ;;
+    esac
+}
+
+configure_project_name() {
+    echo "請輸入專案名稱,不要有特殊或空白字元"
+    echo "*分析產生的檔案都將以專案名稱為開頭"
+    read -p "請輸入: " BASE_PROJECT_NAME
+
+    if [[ "$CHAIN_STAGES" == true ]]; then
+        PROJECT_NAME="$BASE_PROJECT_NAME"
     else
-        echo "錯誤：無效的選擇。"
-        # 輸入錯誤，不 break，自動重跑迴圈
+        PROJECT_NAME="${BASE_PROJECT_NAME}_standalone_$(date +%Y%m%d_%H%M%S)"
+        echo "[單獨分析模式] 為避免覆蓋既有輸出，本次專案名稱自動調整為: $PROJECT_NAME"
     fi
-done
+}
 
-# 移除潛在的引號或空白，確保路徑純淨
-REF_GENOME=$(echo "$REF_GENOME" | sed "s/['\"]//g")
+select_ref_genome() {
+    while true; do
+        source "$CONF_FILE"
+        MAPFILE=()
+        MAPVAL=()
 
-# 核心檔案存在檢查
-if [ -z "$REF_GENOME" ] || [ ! -f "$REF_GENOME" ]; then
-    echo "錯誤：檔案不存在於指定路徑：$REF_GENOME"
-    exit 1
-fi
+        while IFS='=' read -r name value; do
+            if [[ "$value" =~ \.(fa|fasta|fna)$ ]]; then
+                MAPFILE+=("$name")
+                MAPVAL+=("$value")
+            fi
+        done < <(env)
 
-# 索引狀態檢查與建立
-if [ ! -f "${REF_GENOME}.bwt" ]; then
-    echo "建立 BWA index..."
-    bwa index "$REF_GENOME" || { echo "BWA index 失敗"; exit 1; }
-fi
+        echo ""
+        echo "--- 可用的參考基因組 ---"
+        for i in "${!MAPFILE[@]}"; do
+            echo "$((i+1))) \$${MAPFILE[$i]} (${MAPVAL[$i]})"
+        done
 
-if [ ! -f "${REF_GENOME}.fai" ]; then
-    echo "建立 Samtools index..."
-    samtools faidx "$REF_GENOME" || { echo "Samtools faidx 失敗"; exit 1; }
-fi
+        MANUAL_OPTION=$(( ${#MAPFILE[@]} + 1 ))
+        echo "------------------------"
+        echo "d) 下載/新增參考基因組 (呼叫 NCBI Fetcher)"
+        echo "$MANUAL_OPTION) 手動輸入絕對路徑"
+        echo "q) 離開程式"
+        echo "------------------------"
 
-echo "使用參考基因組: $REF_GENOME"
-# ==============================================================================
+        read -p "請選擇參考基因組 (1-$MANUAL_OPTION, d, 或 q): " REF_CHOICE
 
+        if [[ "$REF_CHOICE" == "d" || "$REF_CHOICE" == "D" ]]; then
+            run_fetch_genome_module
+            echo ""
+            echo ">>> 返回主選單，正在刷新參考基因組清單..."
+            continue
+        elif [[ "$REF_CHOICE" == "q" || "$REF_CHOICE" == "Q" ]]; then
+            echo "使用者取消操作，程式結束。"
+            exit 0
+        fi
 
+        if [[ "$REF_CHOICE" =~ ^[0-9]+$ ]] && [ "$REF_CHOICE" -ge 1 ] && [ "$REF_CHOICE" -le "${#MAPFILE[@]}" ]; then
+            REF_GENOME="${MAPVAL[$((REF_CHOICE-1))]}"
+            break
+        elif [[ "$REF_CHOICE" == "$MANUAL_OPTION" ]]; then
+            read -e -p "請輸入絕對路徑 (或輸入 'b' 返回選單): " REF_GENOME
+            if [[ "$REF_GENOME" == "b" || "$REF_GENOME" == "B" ]]; then
+                echo "返回選單..."
+                continue
+            fi
+            break
+        else
+            echo "錯誤：無效的選擇。"
+        fi
+    done
 
-# 1.3 模式選擇
-echo ""
-echo "-------------------------------------------------------"
-echo "請選擇分析運行模式："
-echo "1) 自動模式 (預先設定篩選策略，遇到決策點不中斷)"
-echo "2) 互動模式 (各階段結束後，手動決定是否移除樣本)"
-echo ""
-read -p "請輸入選項 (1, 2, 或 q 離開): " RUN_MODE
+    REF_GENOME=$(echo "$REF_GENOME" | sed "s/['\"]//g")
 
-if [[ "$RUN_MODE" == "q" || "$RUN_MODE" == "Q" ]]; then
-    echo "使用者取消操作，程式結束。"
-    exit 0
-fi
+    if [ -z "$REF_GENOME" ] || [ ! -f "$REF_GENOME" ]; then
+        echo "錯誤：檔案不存在於指定路徑：$REF_GENOME"
+        exit 1
+    fi
 
-if [ "$RUN_MODE" == "1" ]; then
-    echo "[模式選擇：自動模式]"
-    read -p "  > 偵測到 PCA Outlier 時處理方式 (1:移除, 2:保留, q:離開): " AUTO_PCA_CHOICE
-    [[ "$AUTO_PCA_CHOICE" == "q" || "$AUTO_PCA_CHOICE" == "Q" ]] && { echo "使用者取消操作。"; exit 0; }
+    if [ ! -f "${REF_GENOME}.bwt" ]; then
+        echo "建立 BWA index..."
+        bwa index "$REF_GENOME" || { echo "BWA index 失敗"; exit 1; }
+    fi
 
-    read -p "  > 偵測到 Clone 樣本時處理方式 (1:移除, 2:保留, q:離開): " AUTO_CLONE_CHOICE
-    [[ "$AUTO_CLONE_CHOICE" == "q" || "$AUTO_CLONE_CHOICE" == "Q" ]] && { echo "使用者取消操作。"; exit 0; }
+    if [ ! -f "${REF_GENOME}.fai" ]; then
+        echo "建立 Samtools index..."
+        samtools faidx "$REF_GENOME" || { echo "Samtools faidx 失敗"; exit 1; }
+    fi
 
-    echo "預設 PCA 決策: $AUTO_PCA_CHOICE"
-    echo "預設 Clone 決策: $AUTO_CLONE_CHOICE"
-else
-    echo "[模式選擇：互動模式]"
-fi
-echo ""
+    echo "使用參考基因組: $REF_GENOME"
+}
 
-# 1.4 階段選擇 (模組化重構版本)
-echo "======================================================="
-echo "  分析流程選擇                                           "
-echo "-------------------------------------------------------"
-echo "  序列修剪 (Fastp Trimming)"
-echo "  基因組比對 (BWA Alignment)"
-echo "  樣本品質過濾 (PCA Outlier Filtering)"
-echo "  複本樣本鑑定 (Clone Identification)"
-echo "  連鎖不平衡過濾 (LD Pruning & Site Map Generation)"
-echo "  最終變異位點標定 (Final SNP Calling & VCF Output)"
-echo "======================================================="
-echo "1) 執行完整分析 (Stage 1-6)"
-echo "2) 僅執行序列清理與比對參考基因組 (Trim & Align)"
-echo "3) 僅執行潛在問題樣本過濾分析 (Outlier & Clone Filtering)"
-echo "4) 僅執行 LD Pruning (分析連鎖不平衡位點)"
-echo "5) 執行最終 SNP Calling (基於現有無LD位點)"
-echo "6) 自定義流程"
-echo ""
-read -p "選擇運行範圍 (或輸入 q 離開): " RUN_CHOICE
+collect_inputs() {
+    if [[ "$RUN_S3" == "y" || "$RUN_S4" == "y" ]]; then
+        echo ""
+        echo "-------------------------------------------------------"
+        echo "請選擇分析運行模式："
+        echo "1) 自動模式 (預設決策)"
+        echo "2) 互動模式 (每次詢問)"
+        echo ""
+        read -p "請輸入選項 (1, 2, 或 q 離開): " RUN_MODE
+        [[ "$RUN_MODE" == "q" || "$RUN_MODE" == "Q" ]] && { echo "使用者取消操作。"; exit 0; }
 
-if [[ "$RUN_CHOICE" == "q" || "$RUN_CHOICE" == "Q" ]]; then
-    echo "使用者取消操作，程式結束。"
-    exit 0
-fi
+        if [ "$RUN_MODE" == "1" ]; then
+            read -p "  > 偵測到 PCA Outlier 時處理方式 (1:移除, 2:保留, q:離開): " AUTO_PCA_CHOICE
+            [[ "$AUTO_PCA_CHOICE" == "q" || "$AUTO_PCA_CHOICE" == "Q" ]] && { echo "使用者取消操作。"; exit 0; }
+            read -p "  > 偵測到 Clone 樣本時處理方式 (1:移除, 2:保留, q:離開): " AUTO_CLONE_CHOICE
+            [[ "$AUTO_CLONE_CHOICE" == "q" || "$AUTO_CLONE_CHOICE" == "Q" ]] && { echo "使用者取消操作。"; exit 0; }
+        fi
+    fi
 
-echo ""
-case "$RUN_CHOICE" in
-    1) RUN_S1=y; RUN_S2=y; RUN_S3=y; RUN_S4=y; RUN_S5=y; RUN_S6=y ;;
-    2) RUN_S1=y; RUN_S2=y; RUN_S3=n; RUN_S4=n; RUN_S5=n; RUN_S6=n ;;
-    3) RUN_S1=n; RUN_S2=n; RUN_S3=y; RUN_S4=y; RUN_S5=n; RUN_S6=n ;;
-    4) RUN_S1=n; RUN_S2=n; RUN_S3=n; RUN_S4=n; RUN_S5=y; RUN_S6=n ;;
-    5) RUN_S1=n; RUN_S2=n; RUN_S3=n; RUN_S4=n; RUN_S5=n; RUN_S6=y ;;
-    *) 
-       read -p "執行 Stage 1 Trimming? (y/n, 或 q 離開): " RUN_S1
-       [[ "$RUN_S1" == "q" ]] && { echo "使用者取消操作。"; exit 0; }
-       read -p "執行 Stage 2 Alignment? (y/n, 或 q 離開): " RUN_S2
-       [[ "$RUN_S2" == "q" ]] && { echo "使用者取消操作。"; exit 0; }
-       read -p "執行 Stage 3 PCA Outlier Filtering? (y/n, 或 q 離開): " RUN_S3
-       [[ "$RUN_S3" == "q" ]] && { echo "使用者取消操作。"; exit 0; }
-       read -p "執行 Stage 4 Clone Filtering? (y/n, 或 q 離開): " RUN_S4
-       [[ "$RUN_S4" == "q" ]] && { echo "使用者取消操作。"; exit 0; }
-       read -p "執行 Stage 5 LD Pruning (Generate Site Map)? (y/n, 或 q 離開): " RUN_S5
-       [[ "$RUN_S5" == "q" ]] && { echo "使用者取消操作。"; exit 0; }
-       read -p "執行 Stage 6 Final SNP Calling (Apply Map)? (y/n, 或 q 離開): " RUN_S6
-       [[ "$RUN_S6" == "q" ]] && { echo "使用者取消操作。"; exit 0; }
-       ;;
-esac
+    if [[ "$RUN_S1" == "y" ]]; then
+        read -e -p "請輸入 Stage1 原始序列 (raw data) 資料夾路徑: " RAW_PATH
+        [ ! -d "$RAW_PATH" ] && { echo "錯誤：找不到路徑 $RAW_PATH"; exit 1; }
+        RAW_PATH=$(realpath "$RAW_PATH")
+    fi
 
+    if [[ "$RUN_S2" == "y" ]]; then
+        if [[ "$CHAIN_STAGES" == true ]]; then
+            TRIM_INPUT_DIR="$STAGE1/trim"
+        else
+            read -e -p "請輸入 Stage2 要用的 trimmed fastq 資料夾路徑: " TRIM_INPUT_DIR
+            [ ! -d "$TRIM_INPUT_DIR" ] && { echo "錯誤：找不到路徑 $TRIM_INPUT_DIR"; exit 1; }
+            TRIM_INPUT_DIR=$(realpath "$TRIM_INPUT_DIR")
+        fi
+    fi
 
+    if [[ "$RUN_S2" == "y" || "$RUN_S5" == "y" || "$RUN_S6" == "y" ]]; then
+        select_ref_genome
+    fi
+
+    if [[ "$RUN_S3" == "y" ]]; then
+        if [[ "$CHAIN_STAGES" == true ]]; then
+            SUMMARY_INPUT_DIR="$STAGE2/mapping_results"
+            MAPPED_BAM_DIR="$STAGE2/mapped_bam"
+        else
+            read -e -p "請輸入 Stage3 mapping_results 目錄路徑: " SUMMARY_INPUT_DIR
+            read -e -p "請輸入 Stage3 mapped_bam 目錄路徑: " MAPPED_BAM_DIR
+            [ ! -d "$SUMMARY_INPUT_DIR" ] && { echo "錯誤：找不到路徑 $SUMMARY_INPUT_DIR"; exit 1; }
+            [ ! -d "$MAPPED_BAM_DIR" ] && { echo "錯誤：找不到路徑 $MAPPED_BAM_DIR"; exit 1; }
+            SUMMARY_INPUT_DIR=$(realpath "$SUMMARY_INPUT_DIR")
+            MAPPED_BAM_DIR=$(realpath "$MAPPED_BAM_DIR")
+        fi
+    fi
+
+    if [[ "$RUN_S4" == "y" ]]; then
+        if [[ "$CHAIN_STAGES" == true ]]; then
+            :
+        else
+            read -e -p "請輸入 Stage4 clone detection 要使用的 BAM list (.bamfile) 路徑: " BAM_LIST_CLONE_INPUT
+            [ ! -s "$BAM_LIST_CLONE_INPUT" ] && { echo "錯誤：找不到或空檔 $BAM_LIST_CLONE_INPUT"; exit 1; }
+            BAM_LIST_CLONE_INPUT=$(realpath "$BAM_LIST_CLONE_INPUT")
+        fi
+    fi
+
+    if [[ "$RUN_S5" == "y" && "$CHAIN_STAGES" != true ]]; then
+        read -e -p "請輸入 Stage5 LD pruning 要使用的 BAM list (.bamfile) 路徑: " BAM_LIST_LD_INPUT
+        [ ! -s "$BAM_LIST_LD_INPUT" ] && { echo "錯誤：找不到或空檔 $BAM_LIST_LD_INPUT"; exit 1; }
+        BAM_LIST_LD_INPUT=$(realpath "$BAM_LIST_LD_INPUT")
+    fi
+
+    if [[ "$RUN_S6" == "y" && "$CHAIN_STAGES" != true ]]; then
+        read -e -p "請輸入 Stage6 Final SNP 要使用的 BAM list (.bamfile) 路徑: " BAM_LIST_FINAL_INPUT
+        [ ! -s "$BAM_LIST_FINAL_INPUT" ] && { echo "錯誤：找不到或空檔 $BAM_LIST_FINAL_INPUT"; exit 1; }
+        BAM_LIST_FINAL_INPUT=$(realpath "$BAM_LIST_FINAL_INPUT")
+
+        read -e -p "請輸入 Stage6 要使用的 LD pruned sites 檔案路徑: " LD_SITES_INPUT
+        [ ! -f "$LD_SITES_INPUT" ] && { echo "錯誤：找不到檔案 $LD_SITES_INPUT"; exit 1; }
+        LD_SITES_INPUT=$(realpath "$LD_SITES_INPUT")
+    fi
+}
+
+confirm_run() {
+    clear
+    [[ "$RUN_MODE" == "1" ]] && MODE_STR="自動模式 (Auto)" || MODE_STR="互動模式 (Manual)"
+
+    echo "                      執行前最終確認"
+    echo ""
+    echo "======================================================="
+    echo "  分析參數確認"
+    echo "-------------------------------------------------------"
+    echo ""
+    printf "  %-15s : %s\n" "專案名稱" "$PROJECT_NAME"
+    [ -n "$RAW_PATH" ] && printf "  %-15s : %s\n" "原始資料路徑" "$RAW_PATH"
+    [ -n "$REF_GENOME" ] && printf "  %-15s : %s\n" "參考基因組" "$REF_GENOME"
+    [[ "$RUN_S3" == "y" || "$RUN_S4" == "y" ]] && printf "  %-15s : %s\n" "執行模式" "$MODE_STR"
+    printf "  %-15s : %s\n" "流程串接" "$([[ "$CHAIN_STAGES" == true ]] && echo "啟用" || echo "停用")"
+    echo "  運行範圍       :"
+    [[ "$RUN_S1" == "y" ]] && echo "    - Stage 1 Fastp Trimming"
+    [[ "$RUN_S2" == "y" ]] && echo "    - Stage 2 BWA Alignment"
+    [[ "$RUN_S3" == "y" ]] && echo "    - Stage 3 PCA Outlier Filtering"
+    [[ "$RUN_S4" == "y" ]] && echo "    - Stage 4 Clone Identification"
+    [[ "$RUN_S5" == "y" ]] && echo "    - Stage 5 LD Pruning"
+    [[ "$RUN_S6" == "y" ]] && echo "    - Stage 6 Final SNP Calling"
+
+    if [[ "$RUN_MODE" == "1" && ( "$RUN_S3" == "y" || "$RUN_S4" == "y" ) ]]; then
+        printf "  %-15s : %s\n" "PCA Outlier 決策" "$([[ "$AUTO_PCA_CHOICE" == "1" ]] && echo "移除" || echo "保留")"
+        printf "  %-15s : %s\n" "Clone 樣本決策" "$([[ "$AUTO_CLONE_CHOICE" == "1" ]] && echo "移除" || echo "保留")"
+    fi
+
+    printf "  %-15s : %s (Jobs: %s)\n" "執行緒" "$THREADS" "$JOBS"
+    printf "  %-15s : %s\n" "日誌檔案" "$LOG_FILE"
+    echo ""
+    echo "-------------------------------------------------------"
+    read -p "  以上是否正確？ (y: 開始執行 / n: 結束): " CONFIRM
+
+    if [[ "$CONFIRM" != "y" && "$CONFIRM" != "Y" ]]; then
+        echo "[取消] 使用者中止程式。"
+        exit 0
+    fi
+}
 
 # ------------------------------------------------------------------------------
-# 2.5 執行前最終確認 (Final Confirmation)
+# Stage function 定義
 # ------------------------------------------------------------------------------
-# 轉換模式與流程的顯示字串
-clear
-echo "                      執行前最終確認                      "
-echo ""
-echo "======================================================="
-echo "  分析參數確認"
-echo "-------------------------------------------------------"
-echo ""
-[[ "$RUN_MODE" == "1" ]] && MODE_STR="自動模式 (Auto)" || MODE_STR="互動模式 (Manual)"
-
-printf "  %-15s : %s\n" "專案名稱" "$PROJECT_NAME"
-printf "  %-15s : %s\n" "原始資料路徑" "$RAW_PATH"
-printf "  %-15s : %s\n" "參考基因組" "$REF_GENOME"
-printf "  %-15s : %s\n" "執行模式" "$MODE_STR"
-
-echo "  運行範圍       :"
-[[ "$RUN_S1" == "y" ]] && echo "    - 序列修剪 (Fastp Trimming)"
-[[ "$RUN_S2" == "y" ]] && echo "    - 基因組比對 (BWA Alignment)"
-[[ "$RUN_S3" == "y" ]] && echo "    - 樣本品質過濾 (PCA Outlier Filtering)"
-[[ "$RUN_S4" == "y" ]] && echo "    - 複本樣本鑑定 (Clone Identification)"
-[[ "$RUN_S5" == "y" ]] && echo "    - 連鎖不平衡過濾 (LD Pruning & Site Map Generation)"
-[[ "$RUN_S6" == "y" ]] && echo "    - 最終變異位點標定 (Final SNP Calling & VCF Output)"
-
-if [ "$RUN_MODE" == "1" ]; then
-    printf "  %-15s : %s\n" "PCA Outlier 決策" "$([[ "$AUTO_PCA_CHOICE" == "1" ]] && echo "移除" || echo "保留")"
-    printf "  %-15s : %s\n" "Clone 樣本決策" "$([[ "$AUTO_CLONE_CHOICE" == "1" ]] && echo "移除" || echo "保留")"
-fi
-
-printf "  %-15s : %s (Jobs: %s)\n" "執行緒" "$THREADS" "$JOBS"
-printf "  %-15s : %s\n" "日誌檔案" "$LOG_FILE"
-echo ""
-echo "-------------------------------------------------------"
-read -p "  以上是否正確？ (y: 開始執行 / n: 結束並重新設定): " CONFIRM
-echo ""
-
-if [[ "$CONFIRM" != "y" && "$CONFIRM" != "Y" ]]; then
-    echo "  [取消] 使用者中止程式，請重新啟動進行設定。"
-    # 移除剛建立但尚未使用的日誌檔案與目錄（選擇性）
-    exit 0
-fi
-
-echo "  配置正確，啟動分析流程..."
-echo ""
-
-
-
-# ------------------------------------------------------------------------------
-# 3. 執行分析流程
-# ------------------------------------------------------------------------------
-
-# --- [Stage 1: Fastp Trimming] ---
-if [[ "$RUN_S1" == "y" ]]; then
+run_stage1_fastp() {
     ask_to_run "Fastp Quality Control" "$STAGE1/trim" SKIP_FASTP
-    if [[ "$SKIP_FASTP" != true ]]; then
-        echo "執行 Fastp..."
-        ls "${RAW_PATH}"/*_R1_001.fast* > raw_list.txt
-        parallel -j "$JOBS" --bar "
-          r1=\"{}\"
-          r2=\$(echo \"\$r1\" | sed 's/_R1_/_R2_/')
-          ext=\$(basename \"\$r1\" | sed 's/.*_R1_001//')
-          base=\$(basename \"\$r1\" _R1_001\$ext)
-          fastp -i \"\$r1\" -I \"\$r2\" -o \"$STAGE1/trim/\${base}_R1_001.fastq.gz\" -O \"$STAGE1/trim/\${base}_R2_001.fastq.gz\" \
-            --thread 2 --qualified_quality_phred 30 --length_required 80 \
-            --html \"$STAGE1/fastp_report/\${base}.html\" --json \"$STAGE1/fastp_report/\${base}.json\"
-        " < raw_list.txt
-
-        N_TRIM=$(wc -l < raw_list.txt)
-        echo "-------------------------------------------------------"
-        echo "[Stage 1 完成回報]"
-        echo "處理樣本總數: $N_TRIM"
-        echo "清理後的檔案目錄: $STAGE1/trim/"
-        echo "Fastp報告目錄: $STAGE1/fastp_report/"
-        echo "-------------------------------------------------------"
-
+    if [[ "$SKIP_FASTP" == true ]]; then
+        return
     fi
-fi
 
-# --- [Stage 2: BWA Alignment] ---
-if [[ "$RUN_S2" == "y" ]]; then
+    echo "執行 Fastp..."
+    ls "${RAW_PATH}"/*_R1_001.fast* > raw_list.txt
+    parallel -j "$JOBS" --bar "
+      r1=\"{}\"
+      r2=\$(echo \"\$r1\" | sed 's/_R1_/_R2_/')
+      ext=\$(basename \"\$r1\" | sed 's/.*_R1_001//')
+      base=\$(basename \"\$r1\" _R1_001\$ext)
+      fastp -i \"\$r1\" -I \"\$r2\" -o \"$STAGE1/trim/\${base}_R1_001.fastq.gz\" -O \"$STAGE1/trim/\${base}_R2_001.fastq.gz\" \
+        --thread 2 --qualified_quality_phred 30 --length_required 80 \
+        --html \"$STAGE1/fastp_report/\${base}.html\" --json \"$STAGE1/fastp_report/\${base}.json\"
+    " < raw_list.txt
+
+    N_TRIM=$(wc -l < raw_list.txt)
+    echo "-------------------------------------------------------"
+    echo "[Stage 1 完成回報]"
+    echo "處理樣本總數: $N_TRIM"
+    echo "清理後的檔案目錄: $STAGE1/trim/"
+    echo "Fastp報告目錄: $STAGE1/fastp_report/"
+    echo "-------------------------------------------------------"
+}
+
+run_stage2_alignment() {
     ask_to_run "BWA Alignment" "$STAGE2/mapped_bam" SKIP_BWA
-    if [[ "$SKIP_BWA" != true ]]; then
-        echo "執行 BWA Mapping..."
-        while read -r r1; do
-            base=$(basename "$r1" _R1_001.fastq.gz)
-            r2="$STAGE1/trim/${base}_R2_001.fastq.gz"
-            bwa mem -t "$THREADS" "$REF_GENOME" "$r1" "$r2" > "$STAGE2/bam/${base}.sam"
-            samtools view -Sb "$STAGE2/bam/${base}.sam" > "$STAGE2/bam/${base}.bam"
-            samtools view -bF4 -@ "$THREADS" "$STAGE2/bam/${base}.bam" > "$STAGE2/mapped_bam/${base}.bam"
-            samtools sort -@ "$THREADS" -o "$STAGE2/mapped_bam/${base}_sorted.bam" "$STAGE2/mapped_bam/${base}.bam"
-            mv "$STAGE2/mapped_bam/${base}_sorted.bam" "$STAGE2/mapped_bam/${base}.bam"
-            samtools index "$STAGE2/mapped_bam/${base}.bam"
-            samtools flagstat "$STAGE2/bam/${base}.bam" > "$STAGE2/mapping_results/${base}.txt"
-            rm "$STAGE2/bam/${base}.sam"
-        done < <(ls "$STAGE1/trim"/*_R1_001.fastq.gz)
-        N_MAPPED=$(ls "$STAGE2/mapped_bam/"*.bam | wc -l)
-        echo "-------------------------------------------------------"
-        echo "[Stage 2 完成回報]"
-        echo "使用的參考基因組: $REF_GENOME"
-        echo "比對指令參數: bwa mem -t $THREADS"
-        echo "完成步驟: SAM轉換、BAM過濾(F4)、排序與建立索引"
-        echo "產出的比對檔案(BAM): $STAGE2/mapped_bam/"
-        echo "比對率統計結果: $STAGE2/mapping_results/"
-        echo "共計完成比對樣本數: $N_MAPPED"
-        echo "-------------------------------------------------------"
+    if [[ "$SKIP_BWA" == true ]]; then
+        return
     fi
-fi
 
-# ------------------------------------------------------------------------------
-# 6. Stage 3: 生成 Mapping Summary 與 PCA 篩選
-# ------------------------------------------------------------------------------
-if [[ "$RUN_S3" == "y" ]]; then
-    echo "[5/8] 生成比對報表與 PCA 品質檢測..."
-    SUMMARY_CSV="$STAGE3/${PROJECT_NAME}_mapping_summary.csv"
-    BAM_LIST="$STAGE3/${PROJECT_NAME}_bwa_mapped.bamfile"
+    echo "執行 BWA Mapping..."
+    while read -r r1; do
+        base=$(basename "$r1" _R1_001.fastq.gz)
+        r2="$(dirname "$r1")/${base}_R2_001.fastq.gz"
+        bwa mem -t "$THREADS" "$REF_GENOME" "$r1" "$r2" > "$STAGE2/bam/${base}.sam"
+        samtools view -Sb "$STAGE2/bam/${base}.sam" > "$STAGE2/bam/${base}.bam"
+        samtools view -bF4 -@ "$THREADS" "$STAGE2/bam/${base}.bam" > "$STAGE2/mapped_bam/${base}.bam"
+        samtools sort -@ "$THREADS" -o "$STAGE2/mapped_bam/${base}_sorted.bam" "$STAGE2/mapped_bam/${base}.bam"
+        mv "$STAGE2/mapped_bam/${base}_sorted.bam" "$STAGE2/mapped_bam/${base}.bam"
+        samtools index "$STAGE2/mapped_bam/${base}.bam"
+        samtools flagstat "$STAGE2/bam/${base}.bam" > "$STAGE2/mapping_results/${base}.txt"
+        rm "$STAGE2/bam/${base}.sam"
+    done < <(ls "$TRIM_INPUT_DIR"/*_R1_001.fastq.gz)
 
-    # 確保基礎 BAM LIST 存在 (對應分類資料夾路徑)
-    ls -d "$PWD/$STAGE2/mapped_bam/"*.bam > "$BAM_LIST"
+    N_MAPPED=$(ls "$STAGE2/mapped_bam/"*.bam | wc -l)
+    echo "-------------------------------------------------------"
+    echo "[Stage 2 完成回報]"
+    echo "使用的參考基因組: $REF_GENOME"
+    echo "比對指令參數: bwa mem -t $THREADS"
+    echo "完成步驟: SAM轉換、BAM過濾(F4)、排序與建立索引"
+    echo "產出的比對檔案(BAM): $STAGE2/mapped_bam/"
+    echo "比對率統計結果: $STAGE2/mapping_results/"
+    echo "共計完成比對樣本數: $N_MAPPED"
+    echo "-------------------------------------------------------"
+}
 
-    ask_to_run "PCA Analysis & Outlier Detection" "$SUMMARY_CSV" SKIP_PCA
+run_stage3_pca() {
+    local summary_csv bam_list_local
+    summary_csv="$STAGE3/${PROJECT_NAME}_mapping_summary.csv"
+    bam_list_local="$STAGE3/${PROJECT_NAME}_bwa_mapped.bamfile"
+
+    echo "[Stage 3] 生成比對報表與 PCA 品質檢測..."
+
+    ls -d "$(realpath "$MAPPED_BAM_DIR")"/*.bam > "$bam_list_local"
+    ask_to_run "PCA Analysis & Outlier Detection" "$summary_csv" SKIP_PCA
 
     if [ "$SKIP_PCA" = true ]; then
         echo ">>> 跳過 PCA 分析，嘗試載入先前的過濾結果..."
         if [ -f "$STAGE3/${PROJECT_NAME}_after_pca.bamfile" ]; then
-            BAM_LIST="$STAGE3/${PROJECT_NAME}_after_pca.bamfile"
-            echo "[!] 載入既有的 PCA 過濾後清單: $(wc -l < "$BAM_LIST") 個樣本"
+            echo "[!] 載入既有的 PCA 過濾後清單: $(wc -l < "$STAGE3/${PROJECT_NAME}_after_pca.bamfile") 個樣本"
+            if [[ "$CHAIN_STAGES" == true ]]; then
+                BAM_LIST="$STAGE3/${PROJECT_NAME}_after_pca.bamfile"
+            fi
         else
             echo "[!] 未發現過濾後清單，假設上次選擇保留所有樣本 (或無 Outlier)。"
+            if [[ "$CHAIN_STAGES" == true ]]; then
+                BAM_LIST="$bam_list_local"
+            fi
         fi
-    else
-        # --- PCA 流程 ---
-        echo "輸出mapping表頭與數據"
-        echo "Sample,Total,Mapped,Properly_Paired,With_Mate_Mapped,Singletons,Mate_Diff_Chr,Mate_Diff_Chr_MapQ5,Secondary,Supplementary,Duplicates,Paired_in_Seq,Read1,Read2" > "$SUMMARY_CSV"
+        return
+    fi
 
-        for f in "$STAGE2/mapping_results"/*.txt; do
-            sample=$(basename "$f" .txt)
-            total=$(grep "in total" "$f" | head -1 | awk '{print $1}')
-            mapped=$(grep " mapped (" "$f" | awk '{print $1}')
-            properly_paired=$(grep "properly paired" "$f" | awk '{print $1}')
-            with_mate=$(grep "with itself and mate mapped" "$f" | awk '{print $1}')
-            singletons=$(grep "singletons" "$f" | awk '{print $1}')
-            mate_diff_chr=$(grep "with mate mapped to a different chr$" "$f" | awk '{print $1}')
-            mate_diff_chr_q5=$(grep "with mate mapped to a different chr (mapQ>=5)" "$f" | awk '{print $1}')
-            secondary=$(grep " secondary" "$f" | awk '{print $1}')
-            supplementary=$(grep " supplementary" "$f" | awk '{print $1}')
-            duplicates=$(grep " duplicates" "$f" | awk '{print $1}')
-            paired_in_seq=$(grep "paired in sequencing" "$f" | awk '{print $1}')
-            read1=$(grep " read1" "$f" | awk '{print $1}')
-            read2=$(grep " read2" "$f" | awk '{print $1}')
-            echo "$sample,$total,$mapped,$properly_paired,$with_mate,$singletons,$mate_diff_chr,$mate_diff_chr_q5,$secondary,$supplementary,$duplicates,$paired_in_seq,$read1,$read2" >> "$SUMMARY_CSV"
-        done
+    echo "輸出mapping表頭與數據"
+    echo "Sample,Total,Mapped,Properly_Paired,With_Mate_Mapped,Singletons,Mate_Diff_Chr,Mate_Diff_Chr_MapQ5,Secondary,Supplementary,Duplicates,Paired_in_Seq,Read1,Read2" > "$summary_csv"
 
-        echo "-------------------------------------------------------"
-        echo "[Stage 3 進度回報]"
-        echo "Mapping Summary 資料表已生成: $SUMMARY_CSV"
-        echo "資料表頭包含: Sample, Total, Mapped, Properly_Paired, Singletons 等 14 項指標"
-        echo "對應統計來源: $STAGE2/mapping_results/"
-        echo "-------------------------------------------------------"
+    for f in "${SUMMARY_INPUT_DIR}"/*.txt; do
+        sample=$(basename "$f" .txt)
+        total=$(grep "in total" "$f" | head -1 | awk '{print $1}')
+        mapped=$(grep " mapped (" "$f" | awk '{print $1}')
+        properly_paired=$(grep "properly paired" "$f" | awk '{print $1}')
+        with_mate=$(grep "with itself and mate mapped" "$f" | awk '{print $1}')
+        singletons=$(grep "singletons" "$f" | awk '{print $1}')
+        mate_diff_chr=$(grep "with mate mapped to a different chr$" "$f" | awk '{print $1}')
+        mate_diff_chr_q5=$(grep "with mate mapped to a different chr (mapQ>=5)" "$f" | awk '{print $1}')
+        secondary=$(grep " secondary" "$f" | awk '{print $1}')
+        supplementary=$(grep " supplementary" "$f" | awk '{print $1}')
+        duplicates=$(grep " duplicates" "$f" | awk '{print $1}')
+        paired_in_seq=$(grep "paired in sequencing" "$f" | awk '{print $1}')
+        read1=$(grep " read1" "$f" | awk '{print $1}')
+        read2=$(grep " read2" "$f" | awk '{print $1}')
+        echo "$sample,$total,$mapped,$properly_paired,$with_mate,$singletons,$mate_diff_chr,$mate_diff_chr_q5,$secondary,$supplementary,$duplicates,$paired_in_seq,$read1,$read2" >> "$summary_csv"
+    done
 
-# --- 在產生 R script 之前，先將路徑轉為絕對路徑 ---
-        ABS_STAGE3=$(realpath "$STAGE3")
-        ABS_SUMMARY_CSV=$(realpath "$SUMMARY_CSV")
-        ABS_BAM_LIST=$(realpath "$BAM_LIST")
+    echo "-------------------------------------------------------"
+    echo "[Stage 3 進度回報]"
+    echo "Mapping Summary 資料表已生成: $summary_csv"
+    echo "對應統計來源: $SUMMARY_INPUT_DIR"
+    echo "-------------------------------------------------------"
 
-# --- PCA R (增強統計資訊與向量顯示) ---
-        echo "輸出PCA.r，使用mapping_rate, pairing_efficiency, singleton_rate三大數據做分析"
-        echo "如果有疑問可以自已使用R-studio調整目錄內的PCA.r後再做plot"
-        PCA_SCRIPT="$STAGE3/${PROJECT_NAME}_PCA.r"
-# --- 直接導出PCA.R範本至目錄下，不做任何更動 ---
-        cat << R_CODE > "$PCA_SCRIPT"
+    ABS_STAGE3=$(realpath "$STAGE3")
+    ABS_SUMMARY_CSV=$(realpath "$summary_csv")
+    ABS_BAM_LIST=$(realpath "$bam_list_local")
+
+    echo "輸出PCA.r，使用mapping_rate, pairing_efficiency, singleton_rate三大數據做分析"
+    echo "如果有疑問可以自已使用R-studio調整目錄內的PCA.r後再做plot"
+    PCA_SCRIPT="$STAGE3/${PROJECT_NAME}_PCA.r"
+    cat << R_CODE > "$PCA_SCRIPT"
 # --- [自動環境檢查] ---
 required_packages <- c("readr", "dplyr", "ggplot2", "ggrepel")
 new_packages <- required_packages[!(required_packages %in% installed.packages()[,"Package"])]
@@ -859,87 +864,86 @@ write.table(to_keep_bams, "${ABS_STAGE3}/${PROJECT_NAME}_after_pca.bamfile", quo
 cat("\n[PCA 統計摘要]\n")
 print(pca_stat)
 R_CODE
-# --- 導出完畢 ---
 
-        Rscript "$PCA_SCRIPT"
+    Rscript "$PCA_SCRIPT"
 
-        # 統計過濾結果
-        N_ORIG=$(wc -l < "$BAM_LIST")
-        N_AFTER=$(wc -l < "$STAGE3/${PROJECT_NAME}_after_pca.bamfile")
-        N_DIFF=$((N_ORIG - N_AFTER))
+    N_ORIG=$(wc -l < "$bam_list_local")
+    N_AFTER=$(wc -l < "$STAGE3/${PROJECT_NAME}_after_pca.bamfile")
+    N_DIFF=$((N_ORIG - N_AFTER))
 
-        echo "-------------------------------------------------------"
-        echo "[Mapping Outlier偵測結果]"
-        echo "原始輸入樣本總數: $N_ORIG"
-        echo "PCA 檢測建議保留樣本數: $N_AFTER"
-        echo "被剔除的樣本數: $N_DIFF"
-        echo "-------------------------------------------------------"
+    echo "-------------------------------------------------------"
+    echo "[Mapping Outlier偵測結果]"
+    echo "原始輸入樣本總數: $N_ORIG"
+    echo "PCA 檢測建議保留樣本數: $N_AFTER"
+    echo "被剔除的樣本數: $N_DIFF"
+    echo "-------------------------------------------------------"
 
-        OUTLIER_FILE="$STAGE3/${PROJECT_NAME}_outliers.txt"
-        if [ -s "$OUTLIER_FILE" ]; then
-            echo "偵測到 $N_DIFF 個 PCA Outliers:"
-            cat "$OUTLIER_FILE"
-            if [ "$RUN_MODE" == "1" ]; then
-                PCA_DECISION=$AUTO_PCA_CHOICE
-                echo "自動模式：套用預設選項 ($PCA_DECISION)"
-            else
-                read -p "是否移除Outlier樣本？(1:移除, 2:保留, q:離開): " PCA_DECISION < /dev/tty
-            fi
+    OUTLIER_FILE="$STAGE3/${PROJECT_NAME}_outliers.txt"
+    if [ -s "$OUTLIER_FILE" ]; then
+        echo "偵測到 $N_DIFF 個 PCA Outliers:"
+        cat "$OUTLIER_FILE"
 
-            if [[ "$PCA_DECISION" == "q" || "$PCA_DECISION" == "Q" ]]; then
-                echo "使用者選擇離開，分析中止。"
-                exit 0
-            fi
+        if [ "$RUN_MODE" == "1" ]; then
+            PCA_DECISION=$AUTO_PCA_CHOICE
+            echo "自動模式：套用預設選項 ($PCA_DECISION)"
+        else
+            read -p "是否移除Outlier樣本？(1:移除, 2:保留, q:離開): " PCA_DECISION < /dev/tty
+        fi
 
+        if [[ "$PCA_DECISION" == "q" || "$PCA_DECISION" == "Q" ]]; then
+            echo "使用者選擇離開，分析中止。"
+            exit 0
+        fi
+
+        if [[ "$CHAIN_STAGES" == true ]]; then
             if [ "$PCA_DECISION" == "1" ]; then
                 BAM_LIST="$STAGE3/${PROJECT_NAME}_after_pca.bamfile"
                 echo "[!] 已套用過濾後的 BAM 清單，當前分析為: $(wc -l < "$BAM_LIST") 個樣本。"
             else
+                BAM_LIST="$bam_list_local"
                 echo "[+] 已選擇保留outlier樣本，維持原始分析樣本數。"
             fi
         fi
+    else
+        [[ "$CHAIN_STAGES" == true ]] && BAM_LIST="$bam_list_local"
     fi
-fi
+}
 
-# ------------------------------------------------------------------------------
-# 7. 執行 Clone 偵測 
-# ------------------------------------------------------------------------------
-if [[ "$RUN_S4" == "y" ]]; then
-    # 若上一步沒跑 S3，則需要確保有基礎的 BAM LIST，路徑對接至 Stage 3 的產出
-    [ -z "$BAM_LIST" ] && BAM_LIST="$STAGE3/${PROJECT_NAME}_bwa_mapped.bamfile"
+run_stage4_clone() {
+    local clone_bam_list
+    if [[ "$CHAIN_STAGES" == true ]]; then
+        [ -z "$BAM_LIST" ] && BAM_LIST="$STAGE3/${PROJECT_NAME}_bwa_mapped.bamfile"
+        clone_bam_list="$BAM_LIST"
+    else
+        clone_bam_list="$BAM_LIST_CLONE_INPUT"
+    fi
 
-    echo "[6/8] 執行 Clone 偵測分析 (ANGSD IBS)..."
-    # 呼叫斷點續傳函式，檢查是否存在 IBS 矩陣檔案
+    echo "[Stage 4] 執行 Clone 偵測分析 (ANGSD IBS)..."
     ask_to_run "Clone Detection (IBS Matrix)" "$STAGE4/${PROJECT_NAME}_clone_identification.ibsMat" SKIP_CLONE_CALC
 
     if [ "$SKIP_CLONE_CALC" = true ]; then
-        echo ">>> 跳過 Clone 計算，嘗試載入先前的去重結果..."
-        # 檢查是否存在去clone後的 BAM 清單，若有則直接讀取
+        echo ">>> 跳過 Clone 計算，嘗試載入先前去重結果..."
         if [ -f "$STAGE4/${PROJECT_NAME}_after_clones.bamfile" ]; then
-            BAM_LIST="$STAGE4/${PROJECT_NAME}_after_clones.bamfile"
-            echo "[!] 載入既有的 Clone 去重後清單: $(wc -l < "$BAM_LIST") 個樣本"
+            echo "[!] 載入既有的 Clone 去重後清單: $(wc -l < "$STAGE4/${PROJECT_NAME}_after_clones.bamfile") 個樣本"
+            [[ "$CHAIN_STAGES" == true ]] && BAM_LIST="$STAGE4/${PROJECT_NAME}_after_clones.bamfile"
         else
             echo "[!] 未發現過濾後清單，假設上次選擇保留 Clone 或無 Clone。"
         fi
-    else
-        # --- 原本的 Clone 流程 ---
-        N_IND_TMP=$(wc -l < "$BAM_LIST")
-        # 設定最小樣本覆蓋門檻，此處維持 70% 樣本數 
-        MIN_IND_TMP=$(echo "$N_IND_TMP * 0.7 / 1" | bc)
+        return
+    fi
 
-        # 使用 ANGSD 計算 IBS (Identity by State) 矩陣，用於評估樣本遺傳一致性
-        echo "使用 ANGSD 計算 IBS (Identity by State) 矩陣"
-        angsd -bam "$BAM_LIST" -GL 1 -P 1 -uniqueOnly 1 -remove_bads 1 -minMapQ 20 -minQ 30 -minInd "$MIN_IND_TMP" \
-              -snp_pval 1e-5 -minMaf 0.05 -doMajorMinor 1 -doMaf 1 -doCounts 1 -makeMatrix 1 \
-              -doIBS 1 -doCov 1 -doGeno 32 -doPost 1 -doGlf 2 -out "$STAGE4/${PROJECT_NAME}_clone_identification"
+    N_IND_TMP=$(wc -l < "$clone_bam_list")
+    MIN_IND_TMP=$(echo "$N_IND_TMP * 0.7 / 1" | bc)
 
-        # 解壓 ANGSD 產出的中間檔以供 R 讀取
-        gzip -kfd "$STAGE4"/*.gz 2>/dev/null || true
-        # --- 在進入 R 前，將路徑轉換為絕對路徑以確保 RStudio 兼容性 ---
-        ABS_STAGE4=$(realpath "$STAGE4")
-        ABS_BAM_LIST=$(realpath "$BAM_LIST")
-        # --- Clone R ：執行層次聚類與門檻判定 ---
-        cat << R_CODE > "$STAGE4/${PROJECT_NAME}_identify_clones.r"
+    angsd -bam "$clone_bam_list" -GL 1 -P 1 -uniqueOnly 1 -remove_bads 1 -minMapQ 20 -minQ 30 -minInd "$MIN_IND_TMP" \
+          -snp_pval 1e-5 -minMaf 0.05 -doMajorMinor 1 -doMaf 1 -doCounts 1 -makeMatrix 1 \
+          -doIBS 1 -doCov 1 -doGeno 32 -doPost 1 -doGlf 2 -out "$STAGE4/${PROJECT_NAME}_clone_identification"
+
+    gzip -kfd "$STAGE4"/*.gz 2>/dev/null || true
+    ABS_STAGE4=$(realpath "$STAGE4")
+    ABS_BAM_LIST=$(realpath "$clone_bam_list")
+
+    cat << R_CODE > "$STAGE4/${PROJECT_NAME}_identify_clones.r"
 # --- [自動環境檢查] 確保 RStudio 環境具備必要套件 ---
 required_packages <- c("readr", "dplyr")
 new_packages <- required_packages[!(required_packages %in% installed.packages()[,"Package"])]
@@ -1016,41 +1020,40 @@ dev.off()
 # 輸出統計診斷數值至終端機
 cat(paste("[R] 統計診斷：底噪高度", round(h[1], 4), "| 自動門檻", round(threshold_h, 4), "\n"))
 R_CODE
-#--- R導出完畢 ---
-        Rscript "$STAGE4/${PROJECT_NAME}_identify_clones.r"
 
-        # Clone 統計與決策傳遞
-        CLONE_REVIEW_FILE="$STAGE4/${PROJECT_NAME}_clones_to_review.txt"
-        N_CLONE_BEFORE=$(wc -l < "$BAM_LIST")
-        N_CLONE_AFTER=$(wc -l < "$STAGE4/${PROJECT_NAME}_after_clones.bamfile")
-        N_CLONE_COUNT=$(wc -l < "$CLONE_REVIEW_FILE")
+    Rscript "$STAGE4/${PROJECT_NAME}_identify_clones.r"
 
-        echo "-------------------------------------------------------"
-        echo "[Clone樣本偵測報告]"
-        echo "1. 原始 PDF (無門檻): $STAGE4/${PROJECT_NAME}_Clone_Dendrogram_RAW.pdf"
-        echo "2. 過濾 PDF (含紅線): $STAGE4/${PROJECT_NAME}_Clone_Dendrogram_Filtered.pdf"
-        echo "進入偵測之樣本總數: $N_CLONE_BEFORE"
-        echo "剔除Clone後樣本數: $N_CLONE_AFTER"
-        echo "偵測到 $N_CLONE_COUNT 個潛在Clone樣本"
-        echo "-------------------------------------------------------"
+    CLONE_REVIEW_FILE="$STAGE4/${PROJECT_NAME}_clones_to_review.txt"
+    N_CLONE_BEFORE=$(wc -l < "$clone_bam_list")
+    N_CLONE_AFTER=$(wc -l < "$STAGE4/${PROJECT_NAME}_after_clones.bamfile")
+    N_CLONE_COUNT=$(wc -l < "$CLONE_REVIEW_FILE")
 
-        if [ -s "$CLONE_REVIEW_FILE" ]; then
-            echo "偵測到以下潛在Clone樣本 (建議移除名單):"
-            cat "$CLONE_REVIEW_FILE"
-            echo "-------------------------------------------------------"
+    echo "-------------------------------------------------------"
+    echo "[Clone樣本偵測報告]"
+    echo "1. 原始 PDF (無門檻): $STAGE4/${PROJECT_NAME}_Clone_Dendrogram_RAW.pdf"
+    echo "2. 過濾 PDF (含紅線): $STAGE4/${PROJECT_NAME}_Clone_Dendrogram_Filtered.pdf"
+    echo "進入偵測之樣本總數: $N_CLONE_BEFORE"
+    echo "剔除Clone後樣本數: $N_CLONE_AFTER"
+    echo "偵測到 $N_CLONE_COUNT 個潛在Clone樣本"
+    echo "-------------------------------------------------------"
 
-            if [ "$RUN_MODE" == "1" ]; then
-                CLONE_DECISION=$AUTO_CLONE_CHOICE
-                echo "自動模式：套用預設選項 ($CLONE_DECISION)"
-            else
-                read -p "是否移除上述Clone樣本？(1:移除, 2:保留, q:離開): " CLONE_DECISION < /dev/tty
-            fi
+    if [ -s "$CLONE_REVIEW_FILE" ]; then
+        echo "偵測到以下潛在Clone樣本 (建議移除名單):"
+        cat "$CLONE_REVIEW_FILE"
 
-            if [[ "$CLONE_DECISION" == "q" || "$CLONE_DECISION" == "Q" ]]; then
-                echo "使用者選擇離開，分析中止。"
-                exit 0
-            fi
+        if [ "$RUN_MODE" == "1" ]; then
+            CLONE_DECISION=$AUTO_CLONE_CHOICE
+            echo "自動模式：套用預設選項 ($CLONE_DECISION)"
+        else
+            read -p "是否移除上述Clone樣本？(1:移除, 2:保留, q:離開): " CLONE_DECISION < /dev/tty
+        fi
 
+        if [[ "$CLONE_DECISION" == "q" || "$CLONE_DECISION" == "Q" ]]; then
+            echo "使用者選擇離開，分析中止。"
+            exit 0
+        fi
+
+        if [[ "$CHAIN_STAGES" == true ]]; then
             if [ "$CLONE_DECISION" == "1" ]; then
                 BAM_LIST="$STAGE4/${PROJECT_NAME}_after_clones.bamfile"
                 echo "[!] 已套用去除clones後的最終 BAM 清單，當前分析樣本數: $(wc -l < "$BAM_LIST") 個樣本。"
@@ -1059,154 +1062,138 @@ R_CODE
             fi
         fi
     fi
-fi
+}
 
-# --- BAM 清單定位與樣本數計算 ---
-# 若執行 S5 或 S6，皆需確認輸入樣本清單與動態門檻
-# BAM 清單定位 (區分「完整自動」與「手動自選」)
-# 動態掃描與樣本清單選取
-# ==============================================================================
-if [[ "$RUN_S5" == "y" || "$RUN_S6" == "y" ]]; then
-    # 預設清單定義 (用於自動模式或快速參考)
-    LIST_FINAL="$STAGE4/${PROJECT_NAME}_after_clones.bamfile"
-    LIST_PCA_ONLY="$STAGE3/${PROJECT_NAME}_after_pca.bamfile"
-    LIST_FULL="$STAGE3/${PROJECT_NAME}_bwa_mapped.bamfile"
+resolve_bam_list_for_stage5_or_6() {
+    if [[ "$CHAIN_STAGES" == true ]]; then
+        LIST_FINAL="$STAGE4/${PROJECT_NAME}_after_clones.bamfile"
+        LIST_PCA_ONLY="$STAGE3/${PROJECT_NAME}_after_pca.bamfile"
+        LIST_FULL="$STAGE3/${PROJECT_NAME}_bwa_mapped.bamfile"
 
-    if [ "$RUN_CHOICE" == "1" ]; then
-        # 完整流程自動模式：優先級判定
-        if [ -f "$LIST_FINAL" ]; then BAM_LIST="$LIST_FINAL"
-        elif [ -f "$LIST_PCA_ONLY" ]; then BAM_LIST="$LIST_PCA_ONLY"
-        else BAM_LIST="$LIST_FULL"
-        fi
-        echo "[自動流程] 選取當前最完善清單: $(basename "$BAM_LIST")"
-    else
-        # 手動/自選模式：自動掃描目錄下所有 .bamfile
-        echo "-------------------------------------------------------"
-        echo "[手動模式] 正在掃描目錄下可用的 .bamfile 清單..."
-        
-        # 搜尋當前目錄與二層子目錄內所有的 .bamfile 並存入陣列
-        mapfile -t FOUND_LISTS < <(find . -maxdepth 3 -name "*.bamfile" | sort)
-        
-        if [ ${#FOUND_LISTS[@]} -eq 0 ]; then
-            echo "警告:未在專案目錄中偵測到任何 .bamfile。"
-            read -e -p "請手動輸入自訂清單的完整路徑: " BAM_LIST < /dev/tty
+        if [ -f "$LIST_FINAL" ]; then
+            BAM_LIST="$LIST_FINAL"
+        elif [ -f "$LIST_PCA_ONLY" ]; then
+            BAM_LIST="$LIST_PCA_ONLY"
         else
-            echo "偵測到以下樣本清單，請選擇欲使用的檔案："
-            for i in "${!FOUND_LISTS[@]}"; do
-                # 標註哪些是腳本預設產出的檔案，方便識別
-                note=""
-                [[ "${FOUND_LISTS[$i]}" == *"$LIST_FINAL" ]] && note="(清理過PCA Outlier與Clone的清單)"
-                [[ "${FOUND_LISTS[$i]}" == *"$LIST_PCA_ONLY" ]] && note="(僅經過 PCA outlier 過濾清單)"
-                [[ "${FOUND_LISTS[$i]}" == *"$LIST_FULL" ]] && note="(預設什麼都沒清理的清單)"
-                
-                printf "%2d) %s %s\n" "$((i+1))" "${FOUND_LISTS[$i]}" "$note"
-            done
-            echo " m) 手動輸入其他路徑"
-            echo " q) 離開程式"
-            
-            read -p "請輸入選項 (1-${#FOUND_LISTS[@]}, m, 或 q): " FILE_CHOICE < /dev/tty
-            
-            if [[ "$FILE_CHOICE" == "q" || "$FILE_CHOICE" == "Q" ]]; then
-                echo "使用者取消操作，程式結束。"
-                exit 0
-            elif [[ "$FILE_CHOICE" =~ ^[0-9]+$ ]] && [ "$FILE_CHOICE" -ge 1 ] && [ "$FILE_CHOICE" -le "${#FOUND_LISTS[@]}" ]; then
-                BAM_LIST="${FOUND_LISTS[$((FILE_CHOICE-1))]}"
-            elif [[ "$FILE_CHOICE" == "m" || "$FILE_CHOICE" == "M" ]]; then
-                read -e -p "請輸入自訂清單路徑: " BAM_LIST < /dev/tty
-            else
-                echo "錯誤：無效的選擇。程式中止。"
-                exit 1
-            fi
+            BAM_LIST="$LIST_FULL"
+        fi
+    else
+        if [[ "$RUN_S5" == "y" ]]; then
+            BAM_LIST="$BAM_LIST_LD_INPUT"
+        elif [[ "$RUN_S6" == "y" ]]; then
+            BAM_LIST="$BAM_LIST_FINAL_INPUT"
         fi
     fi
 
-    # 驗證最終選擇的檔案
     if [ ! -s "$BAM_LIST" ]; then
         echo "錯誤：指定的清單檔案「$BAM_LIST」不存在或為空。"
         exit 1
     fi
 
-    # 根據選定的清單內容，動態更新樣本總數與 70% 門檻 (MIN_IND)
     N_IND=$(wc -l < "$BAM_LIST")
     MIN_IND=$(echo "$N_IND * 0.7 / 1" | bc)
     echo "當前分析清單：$BAM_LIST"
     echo "樣本總數：$N_IND，SNP Calling 門檻 (70%)：$MIN_IND"
-fi
+}
 
-
-# --- [Stage 5: LD Pruning & Site Map Generation] ---
-if [[ "$RUN_S5" == "y" ]]; then
-    echo "[7/8] 執行 LD Pruning 產生連鎖不平衡位點表..."
+run_stage5_ld_pruning() {
     ask_to_run "LD Pruning (Site Map)" "$STAGE5/LDpruned_snp.sites" SKIP_S5
-    
-    if [[ "$SKIP_S5" != true ]]; then
-        # 執行初步 SNP Calling 以獲取全位點資訊
-        echo "執行初步 SNP Calling 以獲取全位點資訊"
-        angsd -b "$BAM_LIST" -GL 1 -uniqueOnly 1 -remove_bads 1 -minMapQ 30 -baq 1 -setMinDepth 5 -SNP_pval 1e-6 -skipTriallelic 1 -doHWE 1 -Hetbias_pval 0.00001 -minInd "$MIN_IND" -doMajorMinor 1 -doMaf 1 -dosnpstat 1 -doPost 2 -doGeno 32 -doCounts 1 -ref "$REF_GENOME" -P 1 -out "$STAGE5/allsnps"
-        
-        gzip -kfd "$STAGE5"/*.gz
-        gunzip -c "$STAGE5/allsnps.mafs.gz" | tail -n +2 | cut -f 1,2 > "$STAGE5/mc1.sites"
-        N_SITES=$(wc -l < "$STAGE5/mc1.sites")
-        
-        # 計算 LD 矩陣與執行位點修剪 (Pruning)
-        echo "# 計算 LD 矩陣"
-        ngsLD --geno "$STAGE5/allsnps.geno" --verbose 1 --probs 1 --n_ind "$N_IND" --n_sites "$N_SITES" --max_kb_dist 50 --pos "$STAGE5/mc1.sites" --n_threads "$THREADS" --extend_out 1 --out "$STAGE5/allsnpsites.LD"
-        echo "# 執行位點修剪 (Pruning)"
-        prune_graph --header -v -n "$THREADS" --in "$STAGE5/allsnpsites.LD" --weight-field "r2" --weight-filter "dist <=10000 && r2 >= 0.5" --out "$STAGE5/allsnpsites.pos"
-        
-        # 轉換格式並建立索引
-        echo "# 轉換LD pruned檔案格式給angsd並建立索引"
-        sed 's/:/\t/g' "$STAGE5/allsnpsites.pos" | awk '$2!=""' | sort -k1 > "$STAGE5/LDpruned_snp.sites"
-        echo "# angsd建立無LD的loci索引"
-        angsd sites index "$STAGE5/LDpruned_snp.sites"
-        
-        echo "[完成] LD Pruned Site Map 已產出: $STAGE5/LDpruned_snp.sites"
-        N_SITES_AFTER=$(wc -l < "$STAGE5/LDpruned_snp.sites")
-        echo "-------------------------------------------------------"
-        echo "[Stage 5 完成回報]"
-        echo "LD Pruning 前的初始位點數: $N_SITES"
-        echo "LD Pruning 後保留的位點數: $N_SITES_AFTER"
-        echo "去LD後位點索引檔路徑: $STAGE5/LDpruned_snp.sites"
-        echo "-------------------------------------------------------"
+    if [[ "$SKIP_S5" == true ]]; then
+        return
     fi
-fi
 
-# --- [Stage 6: Final SNP Calling] ---
-if [[ "$RUN_S6" == "y" ]]; then
-    echo "[8/8] 執行最終 SNP Calling (基於 LD Pruned Sites)..."
-    
-    # 強制檢查上游位點表是否存在
-    if [ ! -f "$STAGE5/LDpruned_snp.sites" ]; then
-        echo "錯誤：未發現 LD Pruning 產出的位點表 ($STAGE5/LDpruned_snp.sites)。"
-        echo "請先執行 Stage 5 或確保該路徑下檔案完整。"
+    echo "[Stage 5] 執行 LD Pruning 產生連鎖不平衡位點表..."
+    angsd -b "$BAM_LIST" -GL 1 -uniqueOnly 1 -remove_bads 1 -minMapQ 30 -baq 1 -setMinDepth 5 -SNP_pval 1e-6 -skipTriallelic 1 -doHWE 1 -Hetbias_pval 0.00001 -minInd "$MIN_IND" -doMajorMinor 1 -doMaf 1 -dosnpstat 1 -doPost 2 -doGeno 32 -doCounts 1 -ref "$REF_GENOME" -P 1 -out "$STAGE5/allsnps"
+
+    gzip -kfd "$STAGE5"/*.gz
+    gunzip -c "$STAGE5/allsnps.mafs.gz" | tail -n +2 | cut -f 1,2 > "$STAGE5/mc1.sites"
+    N_SITES=$(wc -l < "$STAGE5/mc1.sites")
+
+    ngsLD --geno "$STAGE5/allsnps.geno" --verbose 1 --probs 1 --n_ind "$N_IND" --n_sites "$N_SITES" --max_kb_dist 50 --pos "$STAGE5/mc1.sites" --n_threads "$THREADS" --extend_out 1 --out "$STAGE5/allsnpsites.LD"
+    prune_graph --header -v -n "$THREADS" --in "$STAGE5/allsnpsites.LD" --weight-field "r2" --weight-filter "dist <=10000 && r2 >= 0.5" --out "$STAGE5/allsnpsites.pos"
+
+    sed 's/:/\t/g' "$STAGE5/allsnpsites.pos" | awk '$2!=""' | sort -k1 > "$STAGE5/LDpruned_snp.sites"
+    angsd sites index "$STAGE5/LDpruned_snp.sites"
+
+    N_SITES_AFTER=$(wc -l < "$STAGE5/LDpruned_snp.sites")
+    echo "-------------------------------------------------------"
+    echo "[Stage 5 完成回報]"
+    echo "LD Pruning 前的初始位點數: $N_SITES"
+    echo "LD Pruning 後保留的位點數: $N_SITES_AFTER"
+    echo "去LD後位點索引檔路徑: $STAGE5/LDpruned_snp.sites"
+    echo "-------------------------------------------------------"
+}
+
+run_stage6_final_snp() {
+    local ld_sites
+    if [[ "$CHAIN_STAGES" == true ]]; then
+        ld_sites="$STAGE5/LDpruned_snp.sites"
+    else
+        ld_sites="$LD_SITES_INPUT"
+    fi
+
+    if [ ! -f "$ld_sites" ]; then
+        echo "錯誤：未發現 LD 位點表 ($ld_sites)。"
         exit 1
     fi
 
     ask_to_run "Final VCF" "$STAGE5/${PROJECT_NAME}_snps_final.vcf" SKIP_S6
-    
-    if [[ "$SKIP_S6" != true ]]; then
-        # 套用 LD-pruned sites 進行 SNP Calling
-        echo "# 套用 LD-pruned sites 進行 SNP Calling"
-        angsd -sites "$STAGE5/LDpruned_snp.sites" -b "$BAM_LIST" -GL 1 -P 1 -minInd "$MIN_IND" -minMapQ 20 -minQ 25 -sb_pval 1e-5 -Hetbias_pval 1e-5 -skipTriallelic 1 -snp_pval 1e-5 -minMaf 0.05 -doMajorMinor 1 -doMaf 1 -doCounts 1 -doGlf 2 -dosnpstat 1 -doPost 1 -doGeno 8 -doBcf 1 --ignore-RG 0 -doHWE 1 -ref "$REF_GENOME" -out "$STAGE5/${PROJECT_NAME}_snps_final"
-        
-        echo "# 轉換 BCF 為 VCF"
-        # 轉換 BCF 為 VCF
-        bcftools view -O v -o "$STAGE5/${PROJECT_NAME}_snps_final.vcf" "$STAGE5/${PROJECT_NAME}_snps_final.bcf"
-        
-        FINAL_SNPS=$(bcftools view -H "$STAGE5/${PROJECT_NAME}_snps_final.vcf" | wc -l)
-        echo "-------------------------------------------------------"
-        echo "[Stage 6 完成]"
-        echo "最終產出的 SNP 總數量: $FINAL_SNPS"
-        echo "最終 VCF 檔案路徑: $STAGE5/${PROJECT_NAME}_snps_final.vcf"
-        echo "-------------------------------------------------------"
-        echo "[完成] 最終 SNP Call Set: $STAGE5/${PROJECT_NAME}_snps_final.vcf"
+    if [[ "$SKIP_S6" == true ]]; then
+        return
     fi
-fi
-echo "======================================================="
-echo "分析結束: $(date)"
-echo "產出 VCF: $STAGE5/${PROJECT_NAME}_snps_final.vcf"
-echo "日誌位置: $LOG_FILE"
-echo "VCF可用PGDSpider做轉換"
-echo "https://software.bioinformatics.unibe.ch/pgdspider/"
-echo "此分析參考 James Fifer https://github.com/jamesfifer/JapanRE"
-echo "======================================================="
+
+    echo "[Stage 6] 執行最終 SNP Calling..."
+    angsd -sites "$ld_sites" -b "$BAM_LIST" -GL 1 -P 1 -minInd "$MIN_IND" -minMapQ 20 -minQ 25 -sb_pval 1e-5 -Hetbias_pval 1e-5 -skipTriallelic 1 -snp_pval 1e-5 -minMaf 0.05 -doMajorMinor 1 -doMaf 1 -doCounts 1 -doGlf 2 -dosnpstat 1 -doPost 1 -doGeno 8 -doBcf 1 --ignore-RG 0 -doHWE 1 -ref "$REF_GENOME" -out "$STAGE5/${PROJECT_NAME}_snps_final"
+
+    bcftools view -O v -o "$STAGE5/${PROJECT_NAME}_snps_final.vcf" "$STAGE5/${PROJECT_NAME}_snps_final.bcf"
+    FINAL_SNPS=$(bcftools view -H "$STAGE5/${PROJECT_NAME}_snps_final.vcf" | wc -l)
+
+    echo "-------------------------------------------------------"
+    echo "[Stage 6 完成]"
+    echo "最終產出的 SNP 總數量: $FINAL_SNPS"
+    echo "最終 VCF 檔案路徑: $STAGE5/${PROJECT_NAME}_snps_final.vcf"
+    echo "-------------------------------------------------------"
+}
+
+# ------------------------------------------------------------------------------
+# 主程序
+# ------------------------------------------------------------------------------
+main() {
+    check_dependencies
+    select_analysis_scope
+    configure_project_name
+    setup_output_dirs
+    start_logging
+    collect_inputs
+    print_runtime_config
+    confirm_run
+
+    [[ "$RUN_S1" == "y" ]] && run_stage1_fastp
+    [[ "$RUN_S2" == "y" ]] && run_stage2_alignment
+
+    if [[ "$RUN_S3" == "y" ]]; then
+        run_stage3_pca
+    fi
+
+    if [[ "$RUN_S4" == "y" ]]; then
+        run_stage4_clone
+    fi
+
+    if [[ "$RUN_S5" == "y" || "$RUN_S6" == "y" ]]; then
+        resolve_bam_list_for_stage5_or_6
+    fi
+
+    [[ "$RUN_S5" == "y" ]] && run_stage5_ld_pruning
+    [[ "$RUN_S6" == "y" ]] && run_stage6_final_snp
+
+    echo "======================================================="
+    echo "分析結束: $(date)"
+    echo "產出 VCF: $STAGE5/${PROJECT_NAME}_snps_final.vcf"
+    echo "日誌位置: $LOG_FILE"
+    echo "VCF可用PGDSpider做轉換"
+    echo "https://software.bioinformatics.unibe.ch/pgdspider/"
+    echo "此分析參考 James Fifer https://github.com/jamesfifer/JapanRE"
+    echo "======================================================="
+}
+
+main "$@"
