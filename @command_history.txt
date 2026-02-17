@@ -1,2 +1,5 @@
 [2026-02-18 00:26:11] [from Darwin SavannaMacBookPro-9.local]  3227  awk -F ',' '{print $1}' ./stylo.str
 [2026-02-18 00:31:53] [from Darwin SavannaMacBookPro-9.local]  3227  awk -F ',' '{print $1}' ./stylo.str
+[2026-02-18 00:45:32] [from Darwin SavannaMacBookPro-9.local]  3228  cd '/Users/savannachow/Github/migseq-snpcalling/'
+[2026-02-18 00:45:51] [from Darwin SavannaMacBookPro-9.local]  3229  ./RefMIG.sh
+[2026-02-18 00:46:44] [from Darwin SavannaMacBookPro-9.local]  3229  ./RefMIG.sh

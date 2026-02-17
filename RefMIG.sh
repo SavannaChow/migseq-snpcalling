@@ -3,8 +3,15 @@
 # MIG Analysis Full Pipeline - Smart Hybrid Mode (v1.7) -- RefMIG
 # ==============================================================================
 
-# --- 自動偵測 Shell 設定檔路徑 ---
-if [[ "$SHELL" == */zsh ]]; then
+# --- 自動偵測「目前執行 shell」設定檔路徑 ---
+# 注意：腳本由 bash 執行時不可 source zshrc，否則 zsh 指令會報錯。
+if [ -n "${BASH_VERSION:-}" ]; then
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        CONF_FILE="$HOME/.bash_profile"
+    else
+        CONF_FILE="$HOME/.bashrc"
+    fi
+elif [ -n "${ZSH_VERSION:-}" ]; then
     CONF_FILE="$HOME/.zshrc"
 elif [[ "$OSTYPE" == "darwin"* ]]; then
     CONF_FILE="$HOME/.bash_profile"
@@ -27,22 +34,12 @@ check_dependencies() {
 
     echo "chech env dependencies"
 
-    local -A tools=(
-        ["fastp"]="conda install -c bioconda fastp"
-        ["bwa"]="sudo apt-get install bwa"
-        ["samtools"]="sudo apt-get install samtools"
-        ["parallel"]="sudo apt-get install parallel"
-        ["angsd"]="http://www.popgen.dk/angsd/index.php/Installation"
-        ["ngsLD"]="https://github.com/fgvieira/ngsLD"
-        ["prune_graph"]="https://github.com/fgvieira/ngsLD (Included in ngsLD)"
-        ["bcftools"]="sudo apt-get install bcftools"
-        ["Rscript"]="sudo apt-get install r-base"
-    )
+    local tools=("fastp" "bwa" "samtools" "parallel" "angsd" "ngsLD" "prune_graph" "bcftools" "Rscript")
 
     local missing_tools=()
     local manual_install=()
 
-    for tool in "${!tools[@]}"; do
+    for tool in "${tools[@]}"; do
         if ! command -v "$tool" &> /dev/null; then
             missing_tools+=("$tool")
         fi
@@ -54,7 +51,19 @@ check_dependencies() {
     else
         echo "缺少以下套件: ${missing_tools[*]}"
         for m_tool in "${missing_tools[@]}"; do
-            local action="${tools[$m_tool]}"
+            local action=""
+            case "$m_tool" in
+                fastp) action="conda install -c bioconda fastp" ;;
+                bwa) action="sudo apt-get install bwa" ;;
+                samtools) action="sudo apt-get install samtools" ;;
+                parallel) action="sudo apt-get install parallel" ;;
+                angsd) action="http://www.popgen.dk/angsd/index.php/Installation" ;;
+                ngsLD) action="https://github.com/fgvieira/ngsLD" ;;
+                prune_graph) action="https://github.com/fgvieira/ngsLD (Included in ngsLD)" ;;
+                bcftools) action="sudo apt-get install bcftools" ;;
+                Rscript) action="sudo apt-get install r-base" ;;
+                *) action="";;
+            esac
             if [[ "$action" == http* ]]; then
                 echo "  - $m_tool: 請手動編譯安裝，參考網址: $action"
                 manual_install+=("$m_tool")
