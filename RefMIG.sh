@@ -873,20 +873,20 @@ prompt_stage7_core_def() {
 
 show_stage7_params() {
     echo "---------------- Stage7 參數 ----------------"
-    echo " 1) maxpops=$S7_MAXPOPS"
+    echo " 1) maxpops=$S7_MAXPOPS (最大K值)"
     echo " 2) burnin=$S7_BURNIN"
     echo " 3) mcmc=$S7_MCMC"
     echo " 4) dataset=$S7_DATASET (.str: $S7_STR_FILE)"
-    echo " 5) kruns=$S7_KRUNS"
+    echo " 5) kruns=$S7_KRUNS (每個K重複次數)"
     echo " 6) numind=$S7_NUMIND"
     echo " 7) numloci=$S7_NUMLOCI"
     echo " 8) ploidy=$S7_PLOIDY"
     echo " 9) missing=$S7_MISSING"
-    echo "10) onerowperind=$S7_ONEROWPERIND"
-    echo "11) label=$S7_LABEL"
-    echo "12) popdata=$S7_POPDATA"
-    echo "13) popflag=$S7_POPFLAG"
-    echo "14) locdata=$S7_LOCDATA"
+    echo "10) onerowperind=$S7_ONEROWPERIND (每個個體一行或兩行)"
+    echo "11) label=$S7_LABEL (樣本ID欄位)"
+    echo "12) popdata=$S7_POPDATA (是否提供既有族群編號欄位)"
+    echo "13) popflag=$S7_POPFLAG (USEPOPINFO時, 是否提供強制指定族群欄位)"
+    echo "14) locdata=$S7_LOCDATA (是否提供location ID欄位; 對應LOCPRIOR)"
     echo "15) pheno=$S7_PHENO"
     echo "16) extracols=$S7_EXTRACOLS"
     echo "17) markers=$S7_MARKERS"
@@ -894,12 +894,51 @@ show_stage7_params() {
     echo "19) mapdist=$S7_MAPDIST"
     echo "20) phase=$S7_PHASE"
     echo "21) phaseinfo=$S7_PHASEINFO"
-    echo "22) markov=$S7_MARKOV"
+    echo "22) markov=$S7_MARKOV (是否使用linkage model)"
     echo "23) parallel=$S7_PARALLEL"
     echo "24) core_def=$S7_CORE_DEF"
     echo "25) cores=$S7_CORES"
     echo "26) harvest=$S7_HARVEST"
     echo "---------------------------------------------"
+}
+
+print_stage7_parameter_notes() {
+    echo "---------------- Stage7 參數註解 ----------------"
+    echo "[LABEL]"
+    echo "  - LABEL 代表資料檔是否包含樣本ID欄位。"
+    echo ""
+    echo "[POPDATA]"
+    echo "  - 在資料檔中提供「事先定義的族群編號」。放在每個個體基因型前面的一欄，通常在 sample_ID 之後。"
+    echo "  - popdata=1: 想檢驗既有族群是否合理"
+    echo "  - popdata=0: 純探索式 STRUCTURE」（無先驗族群）"
+    echo ""
+    echo "[POPFLAG]"
+    echo "  - popflag 用於 USEPOPINFO 模式，控制個體是否強制指定族群。"
+    echo "  - 啟用時需在 popdata 後再加一欄。"
+    echo ""
+    echo "[LOCPRIOR / LOCDATA]"
+    echo "  - LOCPRIOR 用於族群訊號弱時，加入 sampling location 的輕量先驗。"
+    echo "  - 它不是把地理位置當成強制分群，而只是提供機率偏好"
+    echo "  - location ID 放在 sample_ID 後；若有 popdata，則放在 popdata 後。"
+    echo "  - location ID 必須是整數(1,2,3...)，同地點個體用同數字。"
+    echo "  - diploid 個體的兩行資料，location ID 必須完全一致。"
+    echo ""
+    echo "[LOCDATA 補充]"
+    echo "  - locdata 也可提供 loci 額外資訊(如染色體或 map position)。"
+    echo "  - 此類資訊只在 linkage model 下需要。"
+    echo ""
+    echo "[ONEROWPERIND]"
+    echo "  - onerowperind=0: 每個 diploid 個體以兩行呈現，同一個體的兩條同源染色體分別佔一行，每一行對應一套等位基因"
+    echo "  - onerowperind=1: 每個 diploid 個體以一行呈現，每個 marker 需在同一行中連續給出兩個等位基因值作為一對 genotype"
+    echo ""
+    echo "[MARKOV]"
+    echo "  - markov 表示是否使用 linkage model。"
+    echo "  - 非連鎖模型通常關閉。"
+    echo ""
+    echo "[MAXPOPS / KRUNS]"
+    echo "  - maxpops: 最大 K 值(必填)，決定要測試到幾個族群假說。"
+    echo "  - kruns: 每個 K 重複跑幾次，建議 >=10 以評估穩定性。"
+    echo "-------------------------------------------------"
 }
 
 prompt_stage7_param_by_index() {
@@ -1965,6 +2004,7 @@ run_stage7_structure_auto() {
     fi
 
     set_stage7_default_values "$stage7_str_base" "$stage7_numind_default" "$stage7_numloci_default"
+    print_stage7_parameter_notes
 
     latest_params=$(find "$STAGE7" -maxdepth 2 -type f -name "stage7_params.env" | sort | tail -n1)
     if [ -n "$latest_params" ] && [ -f "$latest_params" ]; then
