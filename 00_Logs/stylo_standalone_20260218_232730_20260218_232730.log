@@ -1,0 +1,16 @@
+===========================================================================
+   MIG-seq Genomic Analysis Pipeline (Refgenome mapping)
+   開發者：Savanna Chow (savanna201@gmail.com) 使用 Gemini 協助開發
+   分析邏輯基於 https://github.com/jamesfifer/JapanRE
+   Credit: AllenChen's lab, Biodiversity Research Center, Academia Sinica
+===========================================================================
+專案名稱: stylo_standalone_20260218_232730
+啟動時間: Wed Feb 18 23:27:30 CST 2026
+-------------------------------------------------------
+-------------------------------------------------------
+請選擇 Stage7 要使用的 STRUCTURE .str 檔案
+目前目錄下尚未偵測到 .str 檔案。
+ r) 重新掃描
+ m) 手動輸入完整路徑
+ q) 離開程式
+請選擇 (r, m, q): 

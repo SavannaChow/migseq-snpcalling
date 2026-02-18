@@ -3,3 +3,20 @@
 [2026-02-18 00:45:32] [from Darwin SavannaMacBookPro-9.local]  3228  cd '/Users/savannachow/Github/migseq-snpcalling/'
 [2026-02-18 00:45:51] [from Darwin SavannaMacBookPro-9.local]  3229  ./RefMIG.sh
 [2026-02-18 00:46:44] [from Darwin SavannaMacBookPro-9.local]  3229  ./RefMIG.sh
+[2026-02-18 20:09:57] [from Darwin SavannaMacBookPro-9.local]  3228  ./RefMIG.sh
+[2026-02-18 20:10:17] [from Darwin SavannaMacBookPro-9.local]  3228  ./RefMIG.sh
+[2026-02-18 20:14:54] [from Darwin SavannaMacBookPro-9.local]  3228  ./RefMIG.sh
+[2026-02-18 20:15:17] [from Darwin SavannaMacBookPro-9.local]  3228  ./RefMIG.sh
+[2026-02-18 20:17:19] [from Darwin SavannaMacBookPro-9.local]  3228  ./RefMIG.sh
+[2026-02-18 20:17:50] [from Darwin SavannaMacBookPro-9.local]  3228  ./RefMIG.sh
+[2026-02-18 21:15:42] [from Darwin SavannaMacBookPro-9.local]  3228  ./RefMIG.sh
+[2026-02-18 21:16:04] [from Darwin SavannaMacBookPro-9.local]  3228  ./RefMIG.sh
+[2026-02-18 21:17:54] [from Darwin SavannaMacBookPro-9.local]  3228  ./RefMIG.sh
+[2026-02-18 21:18:05] [from Darwin SavannaMacBookPro-9.local]  3228  ./RefMIG.sh
+[2026-02-18 21:18:14] [from Darwin SavannaMacBookPro-9.local]  3228  ./RefMIG.sh
+[2026-02-18 21:18:46] [from Darwin SavannaMacBookPro-9.local]  3228  ./RefMIG.sh
+[2026-02-18 23:27:36] [from Darwin SavannaMacBookPro-9.local]  3228  ./RefMIG.sh
+[2026-02-18 23:28:30] [from Darwin SavannaMacBookPro-9.local]  3230  ./RefMIG.sh
+[2026-02-18 23:28:33] [from Darwin SavannaMacBookPro-9.local]  3230  ./RefMIG.sh
+[2026-02-18 23:39:50] [from Darwin SavannaMacBookPro-9.local]  3229  ./RefMIG.sh
+[2026-02-18 23:39:59] [from Darwin SavannaMacBookPro-9.local]  3229  ./RefMIG.sh
