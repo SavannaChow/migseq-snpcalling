@@ -2252,7 +2252,7 @@ run_stage9_genetic_divergence() {
 
     echo "[Stage 9 - Step 3] 產生每族群 SFS..."
     for pop_name in "${pop_names[@]}"; do
-        realSFS "$stage9_dir/${pop_name}.saf.idx" > "$stage9_dir/${pop_name}.sfs"
+        realSFS -cores "$THREADS" "$stage9_dir/${pop_name}.saf.idx" > "$stage9_dir/${pop_name}.sfs"
     done
 
     echo "[Stage 9 - Step 4] 計算 pairwise Fst..."
@@ -2266,8 +2266,8 @@ run_stage9_genetic_divergence() {
             pair_tag="${p1}_${p2}"
             pair_sfs="$stage9_fst_dir/${p1}.${p2}.sfs"
             fst_prefix="$stage9_fst_dir/$pair_tag"
-            realSFS "$stage9_dir/${p1}.saf.idx" "$stage9_dir/${p2}.saf.idx" > "$pair_sfs"
-            realSFS fst index "$stage9_dir/${p1}.saf.idx" "$stage9_dir/${p2}.saf.idx" -sfs "$pair_sfs" -fstout "$fst_prefix"
+            realSFS -cores "$THREADS" "$stage9_dir/${p1}.saf.idx" "$stage9_dir/${p2}.saf.idx" > "$pair_sfs"
+            realSFS fst index "$stage9_dir/${p1}.saf.idx" "$stage9_dir/${p2}.saf.idx" -sfs "$pair_sfs" -fstout "$fst_prefix" -cores "$THREADS"
 
             fst_idx="${fst_prefix}.fst.idx"
             fst_stats_file="$stage9_fst_dir/${pair_tag}.fst.txt"
@@ -2276,14 +2276,14 @@ run_stage9_genetic_divergence() {
             {
                 echo "# Pair: $p1 vs $p2"
                 echo "# Columns: FST.Unweight<TAB>FST.Weight"
-                realSFS fst stats "$fst_idx" 2>&1
+                realSFS fst stats "$fst_idx" -cores "$THREADS" 2>&1
             } > "$fst_stats_file"
 
             {
                 echo "# Pair: $p1 vs $p2"
                 echo "# Output columns from realSFS fst stats2"
                 echo "# Typically includes: region  chr  midPos  Nsites (and related window stats)"
-                realSFS fst stats2 "$fst_idx" 2>&1
+                realSFS fst stats2 "$fst_idx" -cores "$THREADS" 2>&1
             } > "$fst_stats2_file"
 
             stats_line=$(grep -E 'FST\.Unweight.*Fst\.Weight' "$fst_stats_file" | tail -n1)
