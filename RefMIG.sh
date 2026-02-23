@@ -2140,11 +2140,14 @@ run_stage8_no_ld_snp() {
 
 run_stage9_genetic_divergence() {
     local stage9_dir stage9_pop_dir stage9_all_bamfile stage9_all_bam_abs
+    local stage9_fst_dir stage9_stats2_dir stage9_matrix_dir
     local stage9_all_n stage9_all_minind
     local pop_files=() pop_norm_files=() pop_names=()
     local choice input_path target_name target_path
     local f n_pop minind_pop pop_name pop_norm
-    local i j p1 p2 pair_sfs fst_prefix fst_idx
+    local i j p1 p2 pair_tag pair_sfs fst_prefix fst_idx
+    local fst_stats_file fst_stats2_file fst_summary_file
+    local stats_line raw_line uw_val wt_val val
 
     if ! command -v realSFS >/dev/null 2>&1; then
         echo "錯誤：找不到 realSFS，無法執行 Stage9。"
@@ -2158,7 +2161,10 @@ run_stage9_genetic_divergence() {
 
     stage9_dir="$STAGE9/${PROJECT_NAME}_divergence_$(date +%Y%m%d_%H%M%S)"
     stage9_pop_dir="$stage9_dir/population_bamfiles"
-    mkdir -p "$stage9_pop_dir"
+    stage9_fst_dir="$stage9_dir/fst_results"
+    stage9_stats2_dir="$stage9_dir/fst_stats2"
+    stage9_matrix_dir="$stage9_dir/fst_matrices"
+    mkdir -p "$stage9_pop_dir" "$stage9_fst_dir" "$stage9_stats2_dir" "$stage9_matrix_dir"
     STAGE9_LAST_RUN_DIR="$stage9_dir"
 
     stage9_all_bam_abs="$stage9_dir/all_populations.bamfile"
@@ -2250,24 +2256,96 @@ run_stage9_genetic_divergence() {
     done
 
     echo "[Stage 9 - Step 4] 計算 pairwise Fst..."
+    fst_summary_file="$stage9_matrix_dir/fst_pairwise_summary.tsv"
+    echo -e "Population1\tPopulation2\tFST.Unweight\tFST.Weight" > "$fst_summary_file"
+
     for ((i=0; i<${#pop_names[@]}; i++)); do
         for ((j=i+1; j<${#pop_names[@]}; j++)); do
             p1="${pop_names[$i]}"
             p2="${pop_names[$j]}"
-            pair_sfs="$stage9_dir/${p1}.${p2}.sfs"
-            fst_prefix="$stage9_dir/${p1}_${p2}"
+            pair_tag="${p1}_${p2}"
+            pair_sfs="$stage9_fst_dir/${p1}.${p2}.sfs"
+            fst_prefix="$stage9_fst_dir/$pair_tag"
             realSFS "$stage9_dir/${p1}.saf.idx" "$stage9_dir/${p2}.saf.idx" > "$pair_sfs"
             realSFS fst index "$stage9_dir/${p1}.saf.idx" "$stage9_dir/${p2}.saf.idx" -sfs "$pair_sfs" -fstout "$fst_prefix"
+
             fst_idx="${fst_prefix}.fst.idx"
-            realSFS fst stats "$fst_idx" > "${fst_prefix}.fst.txt"
-            realSFS fst stats2 "$fst_idx" > "${fst_prefix}.fst.stats2.txt"
+            fst_stats_file="$stage9_fst_dir/${pair_tag}.fst.txt"
+            fst_stats2_file="$stage9_stats2_dir/${pair_tag}.fst.stats2.txt"
+
+            {
+                echo "# Pair: $p1 vs $p2"
+                echo "# Columns: FST.Unweight<TAB>FST.Weight"
+                realSFS fst stats "$fst_idx" 2>&1
+            } > "$fst_stats_file"
+
+            {
+                echo "# Pair: $p1 vs $p2"
+                echo "# Output columns from realSFS fst stats2"
+                echo "# Typically includes: region  chr  midPos  Nsites (and related window stats)"
+                realSFS fst stats2 "$fst_idx" 2>&1
+            } > "$fst_stats2_file"
+
+            stats_line=$(grep -E 'FST\.Unweight.*Fst\.Weight' "$fst_stats_file" | tail -n1)
+            if [ -n "$stats_line" ]; then
+                uw_val=$(echo "$stats_line" | sed -E 's/.*FST\.Unweight[^:]*:([0-9eE+.-]+).*/\1/')
+                wt_val=$(echo "$stats_line" | sed -E 's/.*Fst\.Weight:([0-9eE+.-]+).*/\1/')
+            else
+                raw_line=$(grep -E '^[[:space:]]*[0-9eE+.-]+[[:space:]]+[0-9eE+.-]+[[:space:]]*$' "$fst_stats_file" | tail -n1)
+                uw_val=$(echo "$raw_line" | awk '{print $1}')
+                wt_val=$(echo "$raw_line" | awk '{print $2}')
+            fi
+            [ -z "$uw_val" ] && uw_val="NA"
+            [ -z "$wt_val" ] && wt_val="NA"
+            echo -e "$p1\t$p2\t$uw_val\t$wt_val" >> "$fst_summary_file"
         done
     done
+
+    {
+        printf "Population"
+        for p1 in "${pop_names[@]}"; do printf "\t%s" "$p1"; done
+        printf "\n"
+        for p1 in "${pop_names[@]}"; do
+            printf "%s" "$p1"
+            for p2 in "${pop_names[@]}"; do
+                if [ "$p1" = "$p2" ]; then
+                    val="0"
+                else
+                    val=$(awk -F'\t' -v a="$p1" -v b="$p2" 'NR>1 && (($1==a && $2==b) || ($1==b && $2==a)) {print $3; exit}' "$fst_summary_file")
+                    [ -z "$val" ] && val="NA"
+                fi
+                printf "\t%s" "$val"
+            done
+            printf "\n"
+        done
+    } > "$stage9_matrix_dir/fst_unweight_matrix.tsv"
+
+    {
+        printf "Population"
+        for p1 in "${pop_names[@]}"; do printf "\t%s" "$p1"; done
+        printf "\n"
+        for p1 in "${pop_names[@]}"; do
+            printf "%s" "$p1"
+            for p2 in "${pop_names[@]}"; do
+                if [ "$p1" = "$p2" ]; then
+                    val="0"
+                else
+                    val=$(awk -F'\t' -v a="$p1" -v b="$p2" 'NR>1 && (($1==a && $2==b) || ($1==b && $2==a)) {print $4; exit}' "$fst_summary_file")
+                    [ -z "$val" ] && val="NA"
+                fi
+                printf "\t%s" "$val"
+            done
+            printf "\n"
+        done
+    } > "$stage9_matrix_dir/fst_weight_matrix.tsv"
 
     echo "-------------------------------------------------------"
     echo "[Stage 9 完成回報]"
     echo "AllSites: $stage9_dir/AllSites.sites"
     echo "Population 檔案資料夾: $stage9_pop_dir"
+    echo "FST 結果資料夾: $stage9_fst_dir"
+    echo "FST stats2 資料夾: $stage9_stats2_dir"
+    echo "FST matrix 資料夾: $stage9_matrix_dir"
     echo "輸出資料夾: $stage9_dir"
     echo "-------------------------------------------------------"
 }
