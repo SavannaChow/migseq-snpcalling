@@ -139,6 +139,7 @@ S8_MININD_PERCENT="70"
 S8_MINMAF="0.05"
 BAM_LIST_DIV_ALL_INPUT=""
 STAGE9_LAST_RUN_DIR=""
+S9_RUN_STATS2="n"
 
 # ------------------------------------------------------------------------------
 # 輔助函式
@@ -1373,6 +1374,12 @@ collect_inputs() {
         echo "1) 你需要一個『所有族群』bamfile 來建立 AllSites。"
         echo "2) 你需要多個 population.bamfile 做 divergence 比較。"
         echo "3) 你需要參考基因組。"
+        echo ""
+        echo "Stage9 Fst 統計選項說明："
+        echo "- stats : 輸出整體 FST.Unweight 與 FST.Weight（建議必跑）"
+        echo "- stats2: 輸出視窗/區段層級統計（檔案較大、耗時較長）"
+        read -p "是否執行 stats2（較耗時）? (y/n) [n]: " S9_RUN_STATS2
+        [ -z "$S9_RUN_STATS2" ] && S9_RUN_STATS2="n"
         select_stage34_bamfile_input "請選擇 Stage9 要使用的『所有族群』BAM list (.bamfile)" BAM_LIST_DIV_ALL_INPUT
     fi
 }
@@ -1405,6 +1412,7 @@ confirm_run() {
     [[ "$RUN_S8" == "y" ]] && printf "  %-15s : %s%%\n" "Stage8 minInd" "$S8_MININD_PERCENT"
     [[ "$RUN_S8" == "y" ]] && printf "  %-15s : %s\n" "Stage8 minMaf" "$S8_MINMAF"
     [[ "$RUN_S9" == "y" ]] && printf "  %-15s : %s\n" "Stage9 全族群BAM" "$BAM_LIST_DIV_ALL_INPUT"
+    [[ "$RUN_S9" == "y" ]] && printf "  %-15s : %s\n" "Stage9 跑stats2" "$S9_RUN_STATS2"
 
     if [[ "$RUN_MODE" == "1" && "$RUN_S3" == "y" ]]; then
         printf "  %-15s : %s\n" "PCA Outlier 決策" "$([[ "$AUTO_PCA_CHOICE" == "1" ]] && echo "移除" || echo "保留")"
@@ -2162,9 +2170,12 @@ run_stage9_genetic_divergence() {
     stage9_dir="$STAGE9/${PROJECT_NAME}_divergence_$(date +%Y%m%d_%H%M%S)"
     stage9_pop_dir="$stage9_dir/population_bamfiles"
     stage9_fst_dir="$stage9_dir/fst_results"
-    stage9_stats2_dir="$stage9_dir/fst_stats2"
     stage9_matrix_dir="$stage9_dir/fst_matrices"
-    mkdir -p "$stage9_pop_dir" "$stage9_fst_dir" "$stage9_stats2_dir" "$stage9_matrix_dir"
+    mkdir -p "$stage9_pop_dir" "$stage9_fst_dir" "$stage9_matrix_dir"
+    if [[ "$S9_RUN_STATS2" == "y" || "$S9_RUN_STATS2" == "Y" ]]; then
+        stage9_stats2_dir="$stage9_dir/fst_stats2"
+        mkdir -p "$stage9_stats2_dir"
+    fi
     STAGE9_LAST_RUN_DIR="$stage9_dir"
 
     stage9_all_bam_abs="$stage9_dir/all_populations.bamfile"
@@ -2271,20 +2282,21 @@ run_stage9_genetic_divergence() {
 
             fst_idx="${fst_prefix}.fst.idx"
             fst_stats_file="$stage9_fst_dir/${pair_tag}.fst.txt"
-            fst_stats2_file="$stage9_stats2_dir/${pair_tag}.fst.stats2.txt"
-
             {
                 echo "# Pair: $p1 vs $p2"
                 echo "# Columns: FST.Unweight<TAB>FST.Weight"
                 realSFS fst stats "$fst_idx" -cores "$THREADS" 2>&1
             } > "$fst_stats_file"
 
-            {
-                echo "# Pair: $p1 vs $p2"
-                echo "# Output columns from realSFS fst stats2"
-                echo "# Typically includes: region  chr  midPos  Nsites (and related window stats)"
-                realSFS fst stats2 "$fst_idx" -cores "$THREADS" 2>&1
-            } > "$fst_stats2_file"
+            if [[ "$S9_RUN_STATS2" == "y" || "$S9_RUN_STATS2" == "Y" ]]; then
+                fst_stats2_file="$stage9_stats2_dir/${pair_tag}.fst.stats2.txt"
+                {
+                    echo "# Pair: $p1 vs $p2"
+                    echo "# Output columns from realSFS fst stats2"
+                    echo "# Typically includes: region  chr  midPos  Nsites (and related window stats)"
+                    realSFS fst stats2 "$fst_idx" -cores "$THREADS" 2>&1
+                } > "$fst_stats2_file"
+            fi
 
             stats_line=$(grep -E 'FST\.Unweight.*Fst\.Weight' "$fst_stats_file" | tail -n1)
             if [ -n "$stats_line" ]; then
@@ -2344,7 +2356,11 @@ run_stage9_genetic_divergence() {
     echo "AllSites: $stage9_dir/AllSites.sites"
     echo "Population 檔案資料夾: $stage9_pop_dir"
     echo "FST 結果資料夾: $stage9_fst_dir"
-    echo "FST stats2 資料夾: $stage9_stats2_dir"
+    if [[ "$S9_RUN_STATS2" == "y" || "$S9_RUN_STATS2" == "Y" ]]; then
+        echo "FST stats2 資料夾: $stage9_stats2_dir"
+    else
+        echo "FST stats2: 已略過（可下次選 y 啟用）"
+    fi
     echo "FST matrix 資料夾: $stage9_matrix_dir"
     echo "輸出資料夾: $stage9_dir"
     echo "-------------------------------------------------------"
