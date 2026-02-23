@@ -101,6 +101,7 @@ STAGE4_BASE="04_Clone_Detection"
 STAGE5_BASE="05_SNP_Calling"
 STAGE7_BASE="06_STRUCTURE_Auto"
 STAGE8_BASE="07_NoLD_SNP_Calling"
+STAGE9_BASE="08_Genetic_Divergence"
 
 STAGE1="$STAGE1_BASE"
 STAGE2="$STAGE2_BASE"
@@ -109,11 +110,12 @@ STAGE4="$STAGE4_BASE"
 STAGE5="$STAGE5_BASE"
 STAGE7="$STAGE7_BASE"
 STAGE8="$STAGE8_BASE"
+STAGE9="$STAGE9_BASE"
 
 THREADS=$(nproc 2>/dev/null || sysctl -n hw.ncpu)
 JOBS=$(( THREADS / 4 )); [ "$JOBS" -lt 1 ] && JOBS=1
 
-RUN_S1=n; RUN_S2=n; RUN_S3=n; RUN_S4=n; RUN_S5=n; RUN_S6=n; RUN_S7=n; RUN_S8=n
+RUN_S1=n; RUN_S2=n; RUN_S3=n; RUN_S4=n; RUN_S5=n; RUN_S6=n; RUN_S7=n; RUN_S8=n; RUN_S9=n
 RUN_MODE="2"
 AUTO_PCA_CHOICE="2"
 AUTO_CLONE_CHOICE="2"
@@ -135,6 +137,8 @@ S7_STR_FILE=""
 BAM_LIST_NOLD_INPUT=""
 S8_MININD_PERCENT="70"
 S8_MINMAF="0.05"
+BAM_LIST_DIV_ALL_INPUT=""
+STAGE9_LAST_RUN_DIR=""
 
 # ------------------------------------------------------------------------------
 # 輔助函式
@@ -230,6 +234,10 @@ setup_output_dirs() {
     if [[ "$RUN_S8" == "y" ]]; then
         mkdir -p "$STAGE8"
     fi
+
+    if [[ "$RUN_S9" == "y" ]]; then
+        mkdir -p "$STAGE9"
+    fi
 }
 
 configure_stage_paths() {
@@ -241,6 +249,7 @@ configure_stage_paths() {
         STAGE5="$STAGE5_BASE"
         STAGE7="$STAGE7_BASE"
         STAGE8="$STAGE8_BASE"
+        STAGE9="$STAGE9_BASE"
     else
         STAGE1="$STAGE1_BASE/$PROJECT_NAME"
         STAGE2="$STAGE2_BASE/$PROJECT_NAME"
@@ -249,6 +258,7 @@ configure_stage_paths() {
         STAGE5="$STAGE5_BASE/$PROJECT_NAME"
         STAGE7="$STAGE7_BASE/$PROJECT_NAME"
         STAGE8="$STAGE8_BASE/$PROJECT_NAME"
+        STAGE9="$STAGE9_BASE/$PROJECT_NAME"
     fi
 }
 
@@ -1152,7 +1162,8 @@ select_analysis_scope() {
     echo "6) 只跑 Stage 6: Final SNP Calling"
     echo "7) 只跑 Stage 7: Structure Auto Generator"
     echo "8) 只跑 Stage 8: Skip LD-Pruning SNP Calling"
-    echo "9) 自定義多階段 (不自動串接)"
+    echo "9) 只跑 Stage 9: Analysis of Genetic Divergence"
+    echo "10) 自定義多階段 (不自動串接)"
     echo "f) 執行完整分析 (Stage 1-7)"
     echo "q) 離開"
     echo ""
@@ -1165,7 +1176,7 @@ select_analysis_scope() {
 
     case "$RUN_SCOPE" in
         f|F)
-            RUN_S1=y; RUN_S2=y; RUN_S3=y; RUN_S4=y; RUN_S5=y; RUN_S6=y; RUN_S7=y; RUN_S8=n
+            RUN_S1=y; RUN_S2=y; RUN_S3=y; RUN_S4=y; RUN_S5=y; RUN_S6=y; RUN_S7=y; RUN_S8=n; RUN_S9=n
             CHAIN_STAGES=true
             ;;
         1) RUN_S1=y ;;
@@ -1176,7 +1187,8 @@ select_analysis_scope() {
         6) RUN_S6=y ;;
         7) RUN_S7=y ;;
         8) RUN_S8=y ;;
-        9)
+        9) RUN_S9=y ;;
+        10)
             read -p "執行 Stage 1 Trimming? (y/n): " RUN_S1
             read -p "執行 Stage 2 Alignment? (y/n): " RUN_S2
             read -p "執行 Stage 3 PCA Outlier Filtering? (y/n): " RUN_S3
@@ -1185,6 +1197,7 @@ select_analysis_scope() {
             read -p "執行 Stage 6 Final SNP Calling? (y/n): " RUN_S6
             read -p "執行 Stage 7 Structure Auto Generator? (y/n): " RUN_S7
             read -p "執行 Stage 8 No-LD SNP Calling? (y/n): " RUN_S8
+            read -p "執行 Stage 9 Genetic Divergence? (y/n): " RUN_S9
             CHAIN_STAGES=false
             ;;
         *)
@@ -1309,7 +1322,7 @@ collect_inputs() {
         fi
     fi
 
-    if [[ "$RUN_S2" == "y" || "$RUN_S5" == "y" || "$RUN_S6" == "y" ]]; then
+    if [[ "$RUN_S2" == "y" || "$RUN_S5" == "y" || "$RUN_S6" == "y" || "$RUN_S9" == "y" ]]; then
         select_ref_genome
     fi
 
@@ -1353,6 +1366,15 @@ collect_inputs() {
         prompt_stage8_minind_percent
         prompt_stage8_minmaf
     fi
+
+    if [[ "$RUN_S9" == "y" ]]; then
+        echo "-------------------------------------------------------"
+        echo "[Stage 9 提醒]"
+        echo "1) 你需要一個『所有族群』bamfile 來建立 AllSites。"
+        echo "2) 你需要多個 population.bamfile 做 divergence 比較。"
+        echo "3) 你需要參考基因組。"
+        select_stage34_bamfile_input "請選擇 Stage9 要使用的『所有族群』BAM list (.bamfile)" BAM_LIST_DIV_ALL_INPUT
+    fi
 }
 
 confirm_run() {
@@ -1379,8 +1401,10 @@ confirm_run() {
     [[ "$RUN_S6" == "y" ]] && echo "    - Stage 6 Final SNP Calling"
     [[ "$RUN_S7" == "y" ]] && echo "    - Stage 7 Structure Auto Generator"
     [[ "$RUN_S8" == "y" ]] && echo "    - Stage 8 No-LD SNP Calling"
+    [[ "$RUN_S9" == "y" ]] && echo "    - Stage 9 Analysis of Genetic Divergence"
     [[ "$RUN_S8" == "y" ]] && printf "  %-15s : %s%%\n" "Stage8 minInd" "$S8_MININD_PERCENT"
     [[ "$RUN_S8" == "y" ]] && printf "  %-15s : %s\n" "Stage8 minMaf" "$S8_MINMAF"
+    [[ "$RUN_S9" == "y" ]] && printf "  %-15s : %s\n" "Stage9 全族群BAM" "$BAM_LIST_DIV_ALL_INPUT"
 
     if [[ "$RUN_MODE" == "1" && "$RUN_S3" == "y" ]]; then
         printf "  %-15s : %s\n" "PCA Outlier 決策" "$([[ "$AUTO_PCA_CHOICE" == "1" ]] && echo "移除" || echo "保留")"
@@ -2114,6 +2138,137 @@ run_stage8_no_ld_snp() {
     echo "-------------------------------------------------------"
 }
 
+run_stage9_genetic_divergence() {
+    local stage9_dir stage9_pop_dir stage9_all_bamfile stage9_all_bam_abs
+    local stage9_all_n stage9_all_minind
+    local pop_files=() pop_norm_files=() pop_names=()
+    local choice input_path target_name target_path
+    local f n_pop minind_pop pop_name pop_norm
+    local i j p1 p2 pair_sfs fst_prefix
+
+    if ! command -v realSFS >/dev/null 2>&1; then
+        echo "錯誤：找不到 realSFS，無法執行 Stage9。"
+        return 1
+    fi
+
+    if [ -z "$BAM_LIST_DIV_ALL_INPUT" ] || [ ! -s "$BAM_LIST_DIV_ALL_INPUT" ]; then
+        echo "錯誤：Stage9 全族群 bamfile 不存在或為空：$BAM_LIST_DIV_ALL_INPUT"
+        return 1
+    fi
+
+    stage9_dir="$STAGE9/${PROJECT_NAME}_divergence_$(date +%Y%m%d_%H%M%S)"
+    stage9_pop_dir="$stage9_dir/population_bamfiles"
+    mkdir -p "$stage9_pop_dir"
+    STAGE9_LAST_RUN_DIR="$stage9_dir"
+
+    stage9_all_bam_abs="$stage9_dir/all_populations.bamfile"
+    normalize_bamfile_to_absolute "$BAM_LIST_DIV_ALL_INPUT" "$stage9_all_bam_abs"
+    stage9_all_bamfile="$stage9_all_bam_abs"
+
+    echo "-------------------------------------------------------"
+    echo "[Stage 9] 分析資料夾已建立：$stage9_dir"
+    echo "請準備每個族群的 population.bamfile 放入：$stage9_pop_dir"
+    echo "檔名建議：pop1.bamfile, pop2.bamfile ..."
+    echo "-------------------------------------------------------"
+
+    while true; do
+        pop_files=()
+        while IFS= read -r f; do
+            pop_files+=("$f")
+        done < <(find "$stage9_pop_dir" -maxdepth 1 -type f -name "*.bamfile" ! -name "all_populations.bamfile" | sort)
+
+        echo "目前偵測到 ${#pop_files[@]} 個 population.bamfile："
+        for i in "${!pop_files[@]}"; do
+            printf "%2d) %s\n" "$((i+1))" "$(basename "${pop_files[$i]}")"
+        done
+        echo "r) 重新掃描"
+        echo "m) 從其他位置匯入 bamfile"
+        echo "c) 準備完成，繼續執行 Stage9"
+        echo "q) 取消 Stage9"
+        read -p "請選擇: " choice
+
+        case "$choice" in
+            r|R) ;;
+            m|M)
+                read -e -p "請輸入要匯入的 bamfile 路徑: " input_path
+                if [ ! -s "$input_path" ]; then
+                    echo "錯誤：找不到或空檔 $input_path"
+                    continue
+                fi
+                input_path=$(realpath "$input_path")
+                target_name=$(basename "$input_path")
+                target_path="$stage9_pop_dir/$target_name"
+                cp "$input_path" "$target_path"
+                echo "已匯入：$target_path"
+                ;;
+            c|C)
+                if [ "${#pop_files[@]}" -lt 2 ]; then
+                    echo "錯誤：至少需要 2 個 population.bamfile 才能計算族群間 divergence。"
+                    continue
+                fi
+                break
+                ;;
+            q|Q)
+                echo "使用者取消 Stage9。"
+                return 0
+                ;;
+            *)
+                echo "錯誤：無效選擇。"
+                ;;
+        esac
+    done
+
+    stage9_all_n=$(wc -l < "$stage9_all_bamfile")
+    stage9_all_minind=$(( stage9_all_n * 8 / 10 ))
+    [ "$stage9_all_minind" -lt 1 ] && stage9_all_minind=1
+
+    echo "[Stage 9 - Step 1] 建立 AllSites..."
+    angsd -b "$stage9_all_bamfile" -GL 1 -uniqueOnly 1 -remove_bads 1 -skipTriallelic 1 -minMapQ 25 -minQ 30 -doHWE 1 -sb_pval 1e-5 -Hetbias_pval 1e-5 -minInd "$stage9_all_minind" -doMajorMinor 1 -doMaf 1 -dosnpstat 1 -doPost 2 -doGeno 8 -P 1 -out "$stage9_dir/AllSites"
+    gunzip -c "$stage9_dir/AllSites.mafs.gz" | tail -n +2 | cut -f1,2 > "$stage9_dir/AllSites.sites"
+    angsd sites index "$stage9_dir/AllSites.sites"
+
+    echo "[Stage 9 - Step 2] 逐族群計算 SAF..."
+    pop_norm_files=()
+    pop_names=()
+    for f in "${pop_files[@]}"; do
+        pop_name=$(basename "$f" .bamfile)
+        pop_norm="$stage9_dir/${pop_name}.normalized.bamfile"
+        normalize_bamfile_to_absolute "$f" "$pop_norm"
+        pop_norm_files+=("$pop_norm")
+        pop_names+=("$pop_name")
+
+        n_pop=$(wc -l < "$pop_norm")
+        minind_pop=$(( n_pop * 8 / 10 ))
+        [ "$minind_pop" -lt 1 ] && minind_pop=1
+
+        angsd -sites "$stage9_dir/AllSites.sites" -b "$pop_norm" -GL 1 -P 1 -minInd "$minind_pop" -doSaf 1 -anc "$REF_GENOME" -ref "$REF_GENOME" -out "$stage9_dir/${pop_name}"
+    done
+
+    echo "[Stage 9 - Step 3] 產生每族群 SFS..."
+    for pop_name in "${pop_names[@]}"; do
+        realSFS "$stage9_dir/${pop_name}.saf.idx" > "$stage9_dir/${pop_name}.sfs"
+    done
+
+    echo "[Stage 9 - Step 4] 計算 pairwise Fst..."
+    for ((i=0; i<${#pop_names[@]}; i++)); do
+        for ((j=i+1; j<${#pop_names[@]}; j++)); do
+            p1="${pop_names[$i]}"
+            p2="${pop_names[$j]}"
+            pair_sfs="$stage9_dir/${p1}.${p2}.sfs"
+            fst_prefix="$stage9_dir/${p1}${p2}"
+            realSFS "$stage9_dir/${p1}.saf.idx" "$stage9_dir/${p2}.saf.idx" > "$pair_sfs"
+            realSFS fst index "$stage9_dir/${p1}.saf.idx" "$stage9_dir/${p2}.saf.idx" -sfs "$pair_sfs" -fstout "$fst_prefix"
+        done
+    done
+
+    echo "-------------------------------------------------------"
+    echo "[Stage 9 完成回報]"
+    echo "AllSites: $stage9_dir/AllSites.sites"
+    echo "Population 檔案資料夾: $stage9_pop_dir"
+    echo "輸出資料夾: $stage9_dir"
+    echo "-------------------------------------------------------"
+}
+
 run_stage7_structure_auto() {
     local stage7_str_input stage7_str_abs stage7_str_base
     local stage7_numind_default stage7_numloci_default
@@ -2462,11 +2617,13 @@ main() {
     [[ "$RUN_S6" == "y" ]] && run_stage6_final_snp
     [[ "$RUN_S7" == "y" ]] && run_stage7_structure_auto
     [[ "$RUN_S8" == "y" ]] && run_stage8_no_ld_snp
+    [[ "$RUN_S9" == "y" ]] && run_stage9_genetic_divergence
 
     echo "======================================================="
     echo "分析結束: $(date)"
     [[ "$RUN_S6" == "y" ]] && echo "產出 VCF: $STAGE5/${PROJECT_NAME}_snps_final.vcf"
     [[ "$RUN_S8" == "y" ]] && echo "產出 No-LD VCF: $STAGE8/${PROJECT_NAME}_snps_noLD.vcf"
+    [[ "$RUN_S9" == "y" ]] && echo "Stage9 輸出資料夾: $STAGE9_LAST_RUN_DIR"
     echo "日誌位置: $LOG_FILE"
     echo "VCF可用PGDSpider做轉換"
     echo "https://software.bioinformatics.unibe.ch/pgdspider/"
