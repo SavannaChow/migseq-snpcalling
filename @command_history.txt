@@ -20,3 +20,10 @@
 [2026-02-18 23:28:33] [from Darwin SavannaMacBookPro-9.local]  3230  ./RefMIG.sh
 [2026-02-18 23:39:50] [from Darwin SavannaMacBookPro-9.local]  3229  ./RefMIG.sh
 [2026-02-18 23:39:59] [from Darwin SavannaMacBookPro-9.local]  3229  ./RefMIG.sh
+[2026-02-23 13:24:53] [from Darwin SavannaMacBookPro-9.local]  3230  ./RefMIG.sh
+[2026-02-23 13:25:08] [from Darwin SavannaMacBookPro-9.local]  3230  ./RefMIG.sh
+[2026-02-23 13:40:46] [from Darwin SavannaMacBookPro-9.local]  3230  angsd -doBcf 1
+[2026-02-23 13:56:10] [from Darwin SavannaMacBookPro-9.local]  3231  angsd -doBcf 1
+[2026-02-23 13:56:29] [from Darwin SavannaMacBookPro-9.local]  3232  ./RefMIG.sh
+[2026-02-23 14:12:31] [from Darwin SavannaMacBookPro-9.local]  3232  ./RefMIG.sh
+[2026-02-23 14:12:59] [from Darwin SavannaMacBookPro-9.local]  3232  ./RefMIG.sh

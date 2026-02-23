@@ -100,6 +100,7 @@ STAGE3_BASE="03_PCA_Analysis"
 STAGE4_BASE="04_Clone_Detection"
 STAGE5_BASE="05_SNP_Calling"
 STAGE7_BASE="06_STRUCTURE_Auto"
+STAGE8_BASE="07_NoLD_SNP_Calling"
 
 STAGE1="$STAGE1_BASE"
 STAGE2="$STAGE2_BASE"
@@ -107,11 +108,12 @@ STAGE3="$STAGE3_BASE"
 STAGE4="$STAGE4_BASE"
 STAGE5="$STAGE5_BASE"
 STAGE7="$STAGE7_BASE"
+STAGE8="$STAGE8_BASE"
 
 THREADS=$(nproc 2>/dev/null || sysctl -n hw.ncpu)
 JOBS=$(( THREADS / 4 )); [ "$JOBS" -lt 1 ] && JOBS=1
 
-RUN_S1=n; RUN_S2=n; RUN_S3=n; RUN_S4=n; RUN_S5=n; RUN_S6=n; RUN_S7=n
+RUN_S1=n; RUN_S2=n; RUN_S3=n; RUN_S4=n; RUN_S5=n; RUN_S6=n; RUN_S7=n; RUN_S8=n
 RUN_MODE="2"
 AUTO_PCA_CHOICE="2"
 AUTO_CLONE_CHOICE="2"
@@ -130,6 +132,9 @@ LD_SITES_INPUT=""
 BAM_LIST_PCA_INPUT=""
 STR_INPUT=""
 S7_STR_FILE=""
+BAM_LIST_NOLD_INPUT=""
+S8_MININD_PERCENT="70"
+S8_MINMAF="0.05"
 
 # ------------------------------------------------------------------------------
 # 輔助函式
@@ -153,6 +158,48 @@ ask_to_run() {
     else
         eval "$skip_var_name=false"
     fi
+}
+
+prompt_stage8_minind_percent() {
+    local input pct
+    while true; do
+        read -p "minInd [$S8_MININD_PERCENT%]: " input
+        [ -z "$input" ] && input="${S8_MININD_PERCENT}%"
+        input="${input//[[:space:]]/}"
+
+        if [[ "$input" =~ ^([0-9]+)%$ ]]; then
+            pct="${BASH_REMATCH[1]}"
+        elif [[ "$input" =~ ^[0-9]+$ ]]; then
+            pct="$input"
+        else
+            echo "錯誤：請輸入數字或數字%。例如 70 或 70%"
+            continue
+        fi
+
+        if [ "$pct" -lt 1 ] || [ "$pct" -gt 100 ]; then
+            echo "錯誤：minInd 百分比需介於 1~100。"
+            continue
+        fi
+
+        S8_MININD_PERCENT="$pct"
+        return 0
+    done
+}
+
+prompt_stage8_minmaf() {
+    local input
+    while true; do
+        read -p "minMaf [$S8_MINMAF]: " input
+        [ -z "$input" ] && input="$S8_MINMAF"
+        input="${input//[[:space:]]/}"
+
+        if [[ "$input" =~ ^0(\.[0-9]+)?$|^1(\.0+)?$ ]]; then
+            S8_MINMAF="$input"
+            return 0
+        fi
+
+        echo "錯誤：minMaf 請輸入 0~1 之間數值（例如 0.05）。"
+    done
 }
 
 setup_output_dirs() {
@@ -179,6 +226,10 @@ setup_output_dirs() {
     if [[ "$RUN_S7" == "y" ]]; then
         mkdir -p "$STAGE7"
     fi
+
+    if [[ "$RUN_S8" == "y" ]]; then
+        mkdir -p "$STAGE8"
+    fi
 }
 
 configure_stage_paths() {
@@ -189,6 +240,7 @@ configure_stage_paths() {
         STAGE4="$STAGE4_BASE"
         STAGE5="$STAGE5_BASE"
         STAGE7="$STAGE7_BASE"
+        STAGE8="$STAGE8_BASE"
     else
         STAGE1="$STAGE1_BASE/$PROJECT_NAME"
         STAGE2="$STAGE2_BASE/$PROJECT_NAME"
@@ -196,6 +248,7 @@ configure_stage_paths() {
         STAGE4="$STAGE4_BASE/$PROJECT_NAME"
         STAGE5="$STAGE5_BASE/$PROJECT_NAME"
         STAGE7="$STAGE7_BASE/$PROJECT_NAME"
+        STAGE8="$STAGE8_BASE/$PROJECT_NAME"
     fi
 }
 
@@ -327,6 +380,59 @@ select_bamfile_input() {
             continue
         elif [[ "$choice" == "m" || "$choice" == "M" ]]; then
             read -e -p "請輸入 bamfile 完整路徑: " selected_path
+            [ ! -s "$selected_path" ] && { echo "錯誤：找不到或空檔 $selected_path"; continue; }
+            selected_path=$(realpath "$selected_path")
+            eval "$out_var=\"$selected_path\""
+            return 0
+        elif [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le "${#found_lists[@]}" ]; then
+            selected_path=$(realpath "${found_lists[$((choice-1))]}")
+            eval "$out_var=\"$selected_path\""
+            return 0
+        else
+            echo "錯誤：無效選擇。"
+        fi
+    done
+}
+
+select_stage34_bamfile_input() {
+    local prompt="$1"
+    local out_var="$2"
+    local found_lists=()
+    local choice selected_path f
+
+    while true; do
+        found_lists=()
+        while IFS= read -r f; do
+            found_lists+=("$f")
+        done < <(find . -maxdepth 5 -type f \( -name "*after_pca.bamfile" -o -name "*after_clones.bamfile" \) | sort)
+
+        echo "-------------------------------------------------------"
+        echo "$prompt"
+        if [ "${#found_lists[@]}" -gt 0 ]; then
+            echo "偵測到以下 Stage3/Stage4 bamfile："
+            for i in "${!found_lists[@]}"; do
+                printf "%2d) %s\n" "$((i+1))" "${found_lists[$i]}"
+            done
+        else
+            echo "目前目錄下尚未偵測到 Stage3/Stage4 輸出的 bamfile。"
+        fi
+        echo " r) 重新掃描"
+        echo " m) 手動輸入完整路徑"
+        echo " q) 離開程式"
+
+        if [ "${#found_lists[@]}" -gt 0 ]; then
+            read -p "請選擇 (1-${#found_lists[@]}, r, m, q): " choice
+        else
+            read -p "請選擇 (r, m, q): " choice
+        fi
+
+        if [[ "$choice" == "q" || "$choice" == "Q" ]]; then
+            echo "使用者取消操作，程式結束。"
+            exit 0
+        elif [[ "$choice" == "r" || "$choice" == "R" ]]; then
+            continue
+        elif [[ "$choice" == "m" || "$choice" == "M" ]]; then
+            read -e -p "請輸入 Stage3/Stage4 bamfile 完整路徑: " selected_path
             [ ! -s "$selected_path" ] && { echo "錯誤：找不到或空檔 $selected_path"; continue; }
             selected_path=$(realpath "$selected_path")
             eval "$out_var=\"$selected_path\""
@@ -1045,7 +1151,8 @@ select_analysis_scope() {
     echo "5) 只跑 Stage 5: LD Pruning"
     echo "6) 只跑 Stage 6: Final SNP Calling"
     echo "7) 只跑 Stage 7: Structure Auto Generator"
-    echo "8) 自定義多階段 (不自動串接)"
+    echo "8) 只跑 Stage 8: Skip LD-Pruning SNP Calling"
+    echo "9) 自定義多階段 (不自動串接)"
     echo "f) 執行完整分析 (Stage 1-7, 會串接上一階段輸出)"
     echo "q) 離開"
     echo ""
@@ -1058,7 +1165,7 @@ select_analysis_scope() {
 
     case "$RUN_SCOPE" in
         f|F)
-            RUN_S1=y; RUN_S2=y; RUN_S3=y; RUN_S4=y; RUN_S5=y; RUN_S6=y; RUN_S7=y
+            RUN_S1=y; RUN_S2=y; RUN_S3=y; RUN_S4=y; RUN_S5=y; RUN_S6=y; RUN_S7=y; RUN_S8=n
             CHAIN_STAGES=true
             ;;
         1) RUN_S1=y ;;
@@ -1068,7 +1175,8 @@ select_analysis_scope() {
         5) RUN_S5=y ;;
         6) RUN_S6=y ;;
         7) RUN_S7=y ;;
-        8)
+        8) RUN_S8=y ;;
+        9)
             read -p "執行 Stage 1 Trimming? (y/n): " RUN_S1
             read -p "執行 Stage 2 Alignment? (y/n): " RUN_S2
             read -p "執行 Stage 3 PCA Outlier Filtering? (y/n): " RUN_S3
@@ -1076,6 +1184,7 @@ select_analysis_scope() {
             read -p "執行 Stage 5 LD Pruning? (y/n): " RUN_S5
             read -p "執行 Stage 6 Final SNP Calling? (y/n): " RUN_S6
             read -p "執行 Stage 7 Structure Auto Generator? (y/n): " RUN_S7
+            read -p "執行 Stage 8 No-LD SNP Calling? (y/n): " RUN_S8
             CHAIN_STAGES=false
             ;;
         *)
@@ -1237,6 +1346,13 @@ collect_inputs() {
             select_str_input "請選擇 Stage7 要使用的 STRUCTURE .str 檔案" STR_INPUT
         fi
     fi
+
+    if [[ "$RUN_S8" == "y" ]]; then
+        select_stage34_bamfile_input "請選擇 Stage8 要使用的 Stage3/Stage4 BAM list (.bamfile)" BAM_LIST_NOLD_INPUT
+        echo "請設定 Stage8 SNP Calling 參數（Enter 使用預設）"
+        prompt_stage8_minind_percent
+        prompt_stage8_minmaf
+    fi
 }
 
 confirm_run() {
@@ -1262,6 +1378,9 @@ confirm_run() {
     [[ "$RUN_S5" == "y" ]] && echo "    - Stage 5 LD Pruning"
     [[ "$RUN_S6" == "y" ]] && echo "    - Stage 6 Final SNP Calling"
     [[ "$RUN_S7" == "y" ]] && echo "    - Stage 7 Structure Auto Generator"
+    [[ "$RUN_S8" == "y" ]] && echo "    - Stage 8 No-LD SNP Calling"
+    [[ "$RUN_S8" == "y" ]] && printf "  %-15s : %s%%\n" "Stage8 minInd" "$S8_MININD_PERCENT"
+    [[ "$RUN_S8" == "y" ]] && printf "  %-15s : %s\n" "Stage8 minMaf" "$S8_MINMAF"
 
     if [[ "$RUN_MODE" == "1" && "$RUN_S3" == "y" ]]; then
         printf "  %-15s : %s\n" "PCA Outlier 決策" "$([[ "$AUTO_PCA_CHOICE" == "1" ]] && echo "移除" || echo "保留")"
@@ -1786,6 +1905,20 @@ resolve_bam_list_for_stage5_or_6() {
     echo "樣本總數：$N_IND，SNP Calling 門檻 (70%)：$MIN_IND"
 }
 
+resolve_bam_list_for_stage8() {
+    if [ -z "$BAM_LIST_NOLD_INPUT" ] || [ ! -s "$BAM_LIST_NOLD_INPUT" ]; then
+        echo "錯誤：Stage8 指定的清單檔案「$BAM_LIST_NOLD_INPUT」不存在或為空。"
+        exit 1
+    fi
+
+    BAM_LIST="$BAM_LIST_NOLD_INPUT"
+    N_IND=$(wc -l < "$BAM_LIST")
+    MIN_IND=$(( N_IND * S8_MININD_PERCENT / 100 ))
+    [ "$MIN_IND" -lt 1 ] && MIN_IND=1
+    echo "當前分析清單：$BAM_LIST"
+    echo "樣本總數：$N_IND，Stage8 SNP Calling 門檻 (${S8_MININD_PERCENT}%): $MIN_IND"
+}
+
 run_stage5_ld_pruning() {
     ask_to_run "LD Pruning (Site Map)" "$STAGE5/LD_pruned_snp.sites" SKIP_S5
     if [[ "$SKIP_S5" == true ]]; then
@@ -1959,6 +2092,25 @@ SPID_CODE
     echo "最終產出的 SNP 總數量: $FINAL_SNPS"
     echo "最終 VCF 檔案路徑: $STAGE5/${PROJECT_NAME}_snps_final.vcf"
     echo "STRUCTURE 檔案路徑: $final_str"
+    echo "-------------------------------------------------------"
+}
+
+run_stage8_no_ld_snp() {
+    ask_to_run "No-LD Final VCF" "$STAGE8/${PROJECT_NAME}_snps_noLD.vcf" SKIP_S8
+    if [[ "$SKIP_S8" == true ]]; then
+        return
+    fi
+
+    echo "[Stage 8] 執行 No-LD SNP Calling..."
+    angsd -b "$BAM_LIST" -GL 1 -maxHetFreq 0.5 -uniqueOnly 1 -remove_bads 1 -minMapQ 30 -baq 1 -setMinDepth 5 -SNP_pval 1e-5 -skipTriallelic 1 -doHWE 1 -Hetbias_pval 0.00001 -minInd "$MIN_IND" -doMajorMinor 1 -doMaf 1 -minMaf "$S8_MINMAF" -dosnpstat 1 -doBcf 1 --ignore-RG 0 -doPost 2 -doGeno 2 -doCounts 1 -P 1 -out "$STAGE8/allsnps"
+
+    bcftools view -O v -o "$STAGE8/${PROJECT_NAME}_snps_noLD.vcf" "$STAGE8/allsnps.bcf"
+    N_NO_LD_SNPS=$(bcftools view -H "$STAGE8/${PROJECT_NAME}_snps_noLD.vcf" | wc -l)
+
+    echo "-------------------------------------------------------"
+    echo "[Stage 8 完成回報]"
+    echo "No-LD SNP 數量: $N_NO_LD_SNPS"
+    echo "No-LD VCF 路徑: $STAGE8/${PROJECT_NAME}_snps_noLD.vcf"
     echo "-------------------------------------------------------"
 }
 
@@ -2302,14 +2454,19 @@ main() {
     if [[ "$RUN_S5" == "y" || "$RUN_S6" == "y" ]]; then
         resolve_bam_list_for_stage5_or_6
     fi
+    if [[ "$RUN_S8" == "y" ]]; then
+        resolve_bam_list_for_stage8
+    fi
 
     [[ "$RUN_S5" == "y" ]] && run_stage5_ld_pruning
     [[ "$RUN_S6" == "y" ]] && run_stage6_final_snp
     [[ "$RUN_S7" == "y" ]] && run_stage7_structure_auto
+    [[ "$RUN_S8" == "y" ]] && run_stage8_no_ld_snp
 
     echo "======================================================="
     echo "分析結束: $(date)"
-    echo "產出 VCF: $STAGE5/${PROJECT_NAME}_snps_final.vcf"
+    [[ "$RUN_S6" == "y" ]] && echo "產出 VCF: $STAGE5/${PROJECT_NAME}_snps_final.vcf"
+    [[ "$RUN_S8" == "y" ]] && echo "產出 No-LD VCF: $STAGE8/${PROJECT_NAME}_snps_noLD.vcf"
     echo "日誌位置: $LOG_FILE"
     echo "VCF可用PGDSpider做轉換"
     echo "https://software.bioinformatics.unibe.ch/pgdspider/"
