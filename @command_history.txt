@@ -1,2 +1,0 @@
-[2026-02-23 15:05:13] [from Darwin SavannaMacBookPro-9.local]  3234  ./RefMIG.sh
-[2026-02-23 15:06:09] [from Darwin SavannaMacBookPro-9.local]  3234  ./RefMIG.sh
