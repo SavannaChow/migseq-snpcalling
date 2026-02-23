@@ -1153,7 +1153,7 @@ select_analysis_scope() {
     echo "7) 只跑 Stage 7: Structure Auto Generator"
     echo "8) 只跑 Stage 8: Skip LD-Pruning SNP Calling"
     echo "9) 自定義多階段 (不自動串接)"
-    echo "f) 執行完整分析 (Stage 1-7, 會串接上一階段輸出)"
+    echo "f) 執行完整分析 (Stage 1-7)"
     echo "q) 離開"
     echo ""
     read -p "選擇分析範圍: " RUN_SCOPE
