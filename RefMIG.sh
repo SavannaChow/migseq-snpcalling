@@ -2144,7 +2144,7 @@ run_stage9_genetic_divergence() {
     local pop_files=() pop_norm_files=() pop_names=()
     local choice input_path target_name target_path
     local f n_pop minind_pop pop_name pop_norm
-    local i j p1 p2 pair_sfs fst_prefix
+    local i j p1 p2 pair_sfs fst_prefix fst_idx
 
     if ! command -v realSFS >/dev/null 2>&1; then
         echo "錯誤：找不到 realSFS，無法執行 Stage9。"
@@ -2255,9 +2255,12 @@ run_stage9_genetic_divergence() {
             p1="${pop_names[$i]}"
             p2="${pop_names[$j]}"
             pair_sfs="$stage9_dir/${p1}.${p2}.sfs"
-            fst_prefix="$stage9_dir/${p1}${p2}"
+            fst_prefix="$stage9_dir/${p1}_${p2}"
             realSFS "$stage9_dir/${p1}.saf.idx" "$stage9_dir/${p2}.saf.idx" > "$pair_sfs"
             realSFS fst index "$stage9_dir/${p1}.saf.idx" "$stage9_dir/${p2}.saf.idx" -sfs "$pair_sfs" -fstout "$fst_prefix"
+            fst_idx="${fst_prefix}.fst.idx"
+            realSFS fst stats "$fst_idx" > "${fst_prefix}.fst.txt"
+            realSFS fst stats2 "$fst_idx" > "${fst_prefix}.fst.stats2.txt"
         done
     done
 
