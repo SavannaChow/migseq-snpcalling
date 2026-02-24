@@ -6,3 +6,5 @@
 [2026-02-23 16:34:47] [from Darwin SavannaMacBookPro-9.local]  3234  ./RefMIG.sh
 [2026-02-23 17:17:25] [from Darwin SavannaMacBookPro-9.local]  3234  ./RefMIG.sh
 [2026-02-23 17:42:15] [from Darwin SavannaMacBookPro-9.local]  3234  ./RefMIG.sh
+[2026-02-24 10:49:54] [from Darwin SavannaMacBookPro-9.local]  3234  ./RefMIG.sh
+[2026-02-24 10:50:09] [from Darwin SavannaMacBookPro-9.local]  3234  ./RefMIG.sh

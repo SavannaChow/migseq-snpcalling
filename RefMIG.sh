@@ -1316,7 +1316,7 @@ collect_inputs() {
     fi
 
     if [[ "$RUN_S2" == "y" ]]; then
-        if [[ "$CHAIN_STAGES" == true ]]; then
+        if [[ "$CHAIN_STAGES" == true || "$RUN_S1" == "y" ]]; then
             TRIM_INPUT_DIR="$STAGE1/trim"
         else
             select_trim_dir_input "請選擇 Stage2 要用的 trimmed fastq 資料夾路徑" TRIM_INPUT_DIR
@@ -1328,7 +1328,7 @@ collect_inputs() {
     fi
 
     if [[ "$RUN_S3" == "y" ]]; then
-        if [[ "$CHAIN_STAGES" == true ]]; then
+        if [[ "$CHAIN_STAGES" == true || "$RUN_S2" == "y" ]]; then
             :
         else
             select_bamfile_input "請選擇 Stage3 要使用的 BAM list (.bamfile)" BAM_LIST_PCA_INPUT
@@ -1336,25 +1336,28 @@ collect_inputs() {
     fi
 
     if [[ "$RUN_S4" == "y" ]]; then
-        if [[ "$CHAIN_STAGES" == true ]]; then
+        if [[ "$CHAIN_STAGES" == true || "$RUN_S3" == "y" || "$RUN_S2" == "y" ]]; then
             :
         else
             select_bamfile_input "請選擇 Stage4 clone detection 要使用的 BAM list (.bamfile)" BAM_LIST_CLONE_INPUT
         fi
     fi
 
-    if [[ "$RUN_S5" == "y" && "$CHAIN_STAGES" != true ]]; then
+    if [[ "$RUN_S5" == "y" && "$CHAIN_STAGES" != true && "$RUN_S4" != "y" && "$RUN_S3" != "y" && "$RUN_S2" != "y" ]]; then
         select_bamfile_input "請選擇 Stage5 LD pruning 要使用的 BAM list (.bamfile)" BAM_LIST_LD_INPUT
     fi
 
     if [[ "$RUN_S6" == "y" && "$CHAIN_STAGES" != true ]]; then
-        select_bamfile_input "請選擇 Stage6 Final SNP 要使用的 BAM list (.bamfile)" BAM_LIST_FINAL_INPUT
-
-        select_ld_sites_input "請選擇 Stage6 要使用的 LD pruned sites 檔案" LD_SITES_INPUT
+        if [[ "$RUN_S5" != "y" && "$RUN_S4" != "y" && "$RUN_S3" != "y" && "$RUN_S2" != "y" ]]; then
+            select_bamfile_input "請選擇 Stage6 Final SNP 要使用的 BAM list (.bamfile)" BAM_LIST_FINAL_INPUT
+        fi
+        if [[ "$RUN_S5" != "y" ]]; then
+            select_ld_sites_input "請選擇 Stage6 要使用的 LD pruned sites 檔案" LD_SITES_INPUT
+        fi
     fi
 
     if [[ "$RUN_S7" == "y" ]]; then
-        if [[ "$CHAIN_STAGES" == true ]]; then
+        if [[ "$CHAIN_STAGES" == true || "$RUN_S6" == "y" ]]; then
             STR_INPUT="$STAGE5/${PROJECT_NAME}_snps_final.str"
         else
             select_str_input "請選擇 Stage7 要使用的 STRUCTURE .str 檔案" STR_INPUT
@@ -1362,7 +1365,9 @@ collect_inputs() {
     fi
 
     if [[ "$RUN_S8" == "y" ]]; then
-        select_stage34_bamfile_input "請選擇 Stage8 要使用的 Stage3/Stage4 BAM list (.bamfile)" BAM_LIST_NOLD_INPUT
+        if [[ "$RUN_S4" != "y" && "$RUN_S3" != "y" ]]; then
+            select_stage34_bamfile_input "請選擇 Stage8 要使用的 Stage3/Stage4 BAM list (.bamfile)" BAM_LIST_NOLD_INPUT
+        fi
         echo "請設定 Stage8 SNP Calling 參數（Enter 使用預設）"
         prompt_stage8_minind_percent
         prompt_stage8_minmaf
@@ -1380,7 +1385,9 @@ collect_inputs() {
         echo "- stats2: 輸出視窗/區段層級統計（檔案較大、耗時較長）"
         read -p "是否執行 stats2（較耗時）? (y/n) [n]: " S9_RUN_STATS2
         [ -z "$S9_RUN_STATS2" ] && S9_RUN_STATS2="n"
-        select_stage34_bamfile_input "請選擇 Stage9 要使用的『所有族群』BAM list (.bamfile)" BAM_LIST_DIV_ALL_INPUT
+        if [[ "$RUN_S4" != "y" && "$RUN_S3" != "y" ]]; then
+            select_stage34_bamfile_input "請選擇 Stage9 要使用的『所有族群』BAM list (.bamfile)" BAM_LIST_DIV_ALL_INPUT
+        fi
     fi
 }
 
@@ -1517,6 +1524,7 @@ run_stage2_alignment() {
 
     # 固定輸出下游 Stage 3/4/5/6 會使用的核心 bam list 介面
     ls -d "$(realpath "$STAGE2/mapped_bam")"/*.bam > "$STAGE2/${PROJECT_NAME}_bwa_mapped.bamfile"
+    BAM_LIST="$STAGE2/${PROJECT_NAME}_bwa_mapped.bamfile"
 
     N_MAPPED=$(ls "$STAGE2/mapped_bam/"*.bam | wc -l)
     echo "-------------------------------------------------------"
@@ -1547,7 +1555,16 @@ run_stage3_pca() {
         fi
         summary_source_dir="$STAGE2/mapping_results"
     else
-        normalize_bamfile_to_absolute "$BAM_LIST_PCA_INPUT" "$bam_list_local"
+        if [ -n "$BAM_LIST_PCA_INPUT" ]; then
+            normalize_bamfile_to_absolute "$BAM_LIST_PCA_INPUT" "$bam_list_local"
+        elif [ -s "$STAGE2/${PROJECT_NAME}_bwa_mapped.bamfile" ]; then
+            cp "$STAGE2/${PROJECT_NAME}_bwa_mapped.bamfile" "$bam_list_local"
+        elif [ -n "$BAM_LIST" ] && [ -s "$BAM_LIST" ]; then
+            normalize_bamfile_to_absolute "$BAM_LIST" "$bam_list_local"
+        else
+            echo "錯誤：Stage3 需要 BAM list，但尚未提供且前序 Stage2 也未產生。"
+            exit 1
+        fi
         summary_source_dir="$STAGE3/mapping_results_from_bam"
         mkdir -p "$summary_source_dir"
 
@@ -1736,17 +1753,15 @@ R_CODE
             exit 0
         fi
 
-        if [[ "$CHAIN_STAGES" == true ]]; then
-            if [ "$PCA_DECISION" == "1" ]; then
-                BAM_LIST="$STAGE3/${PROJECT_NAME}_after_pca.bamfile"
-                echo "[!] 已套用過濾後的 BAM 清單，當前分析為: $(wc -l < "$BAM_LIST") 個樣本。"
-            else
-                BAM_LIST="$bam_list_local"
-                echo "[+] 已選擇保留outlier樣本，維持原始分析樣本數。"
-            fi
+        if [ "$PCA_DECISION" == "1" ]; then
+            BAM_LIST="$STAGE3/${PROJECT_NAME}_after_pca.bamfile"
+            echo "[!] 已套用過濾後的 BAM 清單，當前分析為: $(wc -l < "$BAM_LIST") 個樣本。"
+        else
+            BAM_LIST="$bam_list_local"
+            echo "[+] 已選擇保留outlier樣本，維持原始分析樣本數。"
         fi
     else
-        [[ "$CHAIN_STAGES" == true ]] && BAM_LIST="$bam_list_local"
+        BAM_LIST="$bam_list_local"
     fi
 }
 
@@ -1756,7 +1771,18 @@ run_stage4_clone() {
         [ -z "$BAM_LIST" ] && BAM_LIST="$STAGE2/${PROJECT_NAME}_bwa_mapped.bamfile"
         clone_bam_list="$BAM_LIST"
     else
-        clone_bam_list="$BAM_LIST_CLONE_INPUT"
+        if [ -n "$BAM_LIST_CLONE_INPUT" ]; then
+            clone_bam_list="$BAM_LIST_CLONE_INPUT"
+        elif [ -n "$BAM_LIST" ] && [ -s "$BAM_LIST" ]; then
+            clone_bam_list="$BAM_LIST"
+        elif [ -s "$STAGE3/${PROJECT_NAME}_after_pca.bamfile" ]; then
+            clone_bam_list="$STAGE3/${PROJECT_NAME}_after_pca.bamfile"
+        elif [ -s "$STAGE2/${PROJECT_NAME}_bwa_mapped.bamfile" ]; then
+            clone_bam_list="$STAGE2/${PROJECT_NAME}_bwa_mapped.bamfile"
+        else
+            echo "錯誤：Stage4 需要 BAM list，但尚未提供且前序 Stage2/3 未產生。"
+            exit 1
+        fi
     fi
 
     echo "[Stage 4] 執行 Clone 偵測分析 (ANGSD IBS)..."
@@ -1894,14 +1920,17 @@ R_CODE
             exit 0
         fi
 
-        if [[ "$CHAIN_STAGES" == true ]]; then
-            if [ "$CLONE_DECISION" == "1" ]; then
-                BAM_LIST="$STAGE4/${PROJECT_NAME}_after_clones.bamfile"
-                echo "[!] 已套用去除clones後的最終 BAM 清單，當前分析樣本數: $(wc -l < "$BAM_LIST") 個樣本。"
-            else
-                echo "[+] 已選擇保留Clone樣本，維持樣本數: $N_CLONE_BEFORE"
-            fi
+        if [ "$CLONE_DECISION" == "1" ]; then
+            BAM_LIST="$STAGE4/${PROJECT_NAME}_after_clones.bamfile"
+            echo "[!] 已套用去除clones後的最終 BAM 清單，當前分析樣本數: $(wc -l < "$BAM_LIST") 個樣本。"
+        else
+            BAM_LIST="$clone_bam_list"
+            echo "[+] 已選擇保留Clone樣本，維持樣本數: $N_CLONE_BEFORE"
         fi
+    fi
+
+    if [ ! -s "$CLONE_REVIEW_FILE" ]; then
+        BAM_LIST="$clone_bam_list"
     fi
 }
 
@@ -1919,7 +1948,15 @@ resolve_bam_list_for_stage5_or_6() {
             BAM_LIST="$LIST_FULL"
         fi
     else
-        if [[ "$RUN_S5" == "y" ]]; then
+        if [ -n "$BAM_LIST" ] && [ -s "$BAM_LIST" ]; then
+            :
+        elif [ -s "$STAGE4/${PROJECT_NAME}_after_clones.bamfile" ]; then
+            BAM_LIST="$STAGE4/${PROJECT_NAME}_after_clones.bamfile"
+        elif [ -s "$STAGE3/${PROJECT_NAME}_after_pca.bamfile" ]; then
+            BAM_LIST="$STAGE3/${PROJECT_NAME}_after_pca.bamfile"
+        elif [ -s "$STAGE2/${PROJECT_NAME}_bwa_mapped.bamfile" ]; then
+            BAM_LIST="$STAGE2/${PROJECT_NAME}_bwa_mapped.bamfile"
+        elif [[ "$RUN_S5" == "y" ]]; then
             BAM_LIST="$BAM_LIST_LD_INPUT"
         elif [[ "$RUN_S6" == "y" ]]; then
             BAM_LIST="$BAM_LIST_FINAL_INPUT"
@@ -1938,12 +1975,19 @@ resolve_bam_list_for_stage5_or_6() {
 }
 
 resolve_bam_list_for_stage8() {
-    if [ -z "$BAM_LIST_NOLD_INPUT" ] || [ ! -s "$BAM_LIST_NOLD_INPUT" ]; then
-        echo "錯誤：Stage8 指定的清單檔案「$BAM_LIST_NOLD_INPUT」不存在或為空。"
+    if [ -n "$BAM_LIST" ] && [ -s "$BAM_LIST" ]; then
+        :
+    elif [ -s "$STAGE4/${PROJECT_NAME}_after_clones.bamfile" ]; then
+        BAM_LIST="$STAGE4/${PROJECT_NAME}_after_clones.bamfile"
+    elif [ -s "$STAGE3/${PROJECT_NAME}_after_pca.bamfile" ]; then
+        BAM_LIST="$STAGE3/${PROJECT_NAME}_after_pca.bamfile"
+    elif [ -n "$BAM_LIST_NOLD_INPUT" ] && [ -s "$BAM_LIST_NOLD_INPUT" ]; then
+        BAM_LIST="$BAM_LIST_NOLD_INPUT"
+    else
+        echo "錯誤：Stage8 需要 Stage3/Stage4 的 bamfile，尚未偵測到可用檔案。"
         exit 1
     fi
 
-    BAM_LIST="$BAM_LIST_NOLD_INPUT"
     N_IND=$(wc -l < "$BAM_LIST")
     MIN_IND=$(( N_IND * S8_MININD_PERCENT / 100 ))
     [ "$MIN_IND" -lt 1 ] && MIN_IND=1
@@ -2163,8 +2207,16 @@ run_stage9_genetic_divergence() {
     fi
 
     if [ -z "$BAM_LIST_DIV_ALL_INPUT" ] || [ ! -s "$BAM_LIST_DIV_ALL_INPUT" ]; then
-        echo "錯誤：Stage9 全族群 bamfile 不存在或為空：$BAM_LIST_DIV_ALL_INPUT"
-        return 1
+        if [ -n "$BAM_LIST" ] && [ -s "$BAM_LIST" ]; then
+            BAM_LIST_DIV_ALL_INPUT="$BAM_LIST"
+        elif [ -s "$STAGE4/${PROJECT_NAME}_after_clones.bamfile" ]; then
+            BAM_LIST_DIV_ALL_INPUT="$STAGE4/${PROJECT_NAME}_after_clones.bamfile"
+        elif [ -s "$STAGE3/${PROJECT_NAME}_after_pca.bamfile" ]; then
+            BAM_LIST_DIV_ALL_INPUT="$STAGE3/${PROJECT_NAME}_after_pca.bamfile"
+        else
+            echo "錯誤：Stage9 全族群 bamfile 不存在或為空：$BAM_LIST_DIV_ALL_INPUT"
+            return 1
+        fi
     fi
 
     stage9_dir="$STAGE9/${PROJECT_NAME}_divergence_$(date +%Y%m%d_%H%M%S)"
@@ -2387,7 +2439,13 @@ run_stage7_structure_auto() {
             return 1
         fi
     else
-        stage7_str_input="$STR_INPUT"
+        if [ -n "$STR_INPUT" ]; then
+            stage7_str_input="$STR_INPUT"
+        elif [ -f "$STAGE5/${PROJECT_NAME}_snps_final.str" ]; then
+            stage7_str_input="$STAGE5/${PROJECT_NAME}_snps_final.str"
+        else
+            stage7_str_input="$STR_INPUT"
+        fi
         if [ ! -f "$stage7_str_input" ]; then
             echo "錯誤：找不到 Stage 7 輸入 .str：$stage7_str_input"
             return 1
