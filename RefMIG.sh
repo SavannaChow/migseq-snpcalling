@@ -2239,15 +2239,22 @@ run_stage5_all_snp_sites() {
 
 run_stage6_ld_pruning_sites() {
     local all_sites_file n_sites_after
+    local stage5_required_missing
     ask_to_run "LD Pruned SNP Site Map" "$STAGE6/LD_pruned_snp.sites" SKIP_S6
     if [[ "$SKIP_S6" == true ]]; then
         return
     fi
 
-    if [[ "$RUN_S5" == "y" ]]; then
-        all_sites_file="$STAGE5/all_snp.sites"
-    else
-        all_sites_file="$ALL_SITES_INPUT"
+    all_sites_file="$STAGE5/all_snp.sites"
+
+    # Stage6 依賴 Stage5 的 allsnps.geno + all_snp.sites。
+    # 若 Stage5 產出不存在，先自動補跑 Stage5 再繼續。
+    stage5_required_missing=false
+    [ ! -s "$STAGE5/all_snp.sites" ] && stage5_required_missing=true
+    [ ! -s "$STAGE5/allsnps.geno" ] && stage5_required_missing=true
+    if [ "$stage5_required_missing" = true ]; then
+        echo "[Stage 6] 偵測到 Stage5 輸出不完整，將先執行 Stage5 產生必要輸入檔。"
+        run_stage5_all_snp_sites
     fi
 
     if [ ! -s "$all_sites_file" ]; then
@@ -2260,8 +2267,11 @@ run_stage6_ld_pruning_sites() {
         exit 1
     fi
 
-    N_SITES=$(wc -l < "$all_sites_file")
-    ngsLD --geno "$STAGE5/allsnps.geno" --verbose 1 --probs 1 --n_ind "$N_IND" --n_sites "$N_SITES" --max_kb_dist "$S6_MAX_KB_DIST" --pos "$all_sites_file" --n_threads "$THREADS" --extend_out 1 --out "$STAGE6/allsnpsites.LD"
+    # 直接將 Stage5 資料夾下所有檔案複製到 Stage6，再由 Stage6 檔案繼續分析。
+    find "$STAGE5" -maxdepth 1 -type f -exec cp -f {} "$STAGE6"/ \;
+
+    N_SITES=$(wc -l < "$STAGE6/all_snp.sites")
+    ngsLD --geno "$STAGE6/allsnps.geno" --verbose 1 --probs 1 --n_ind "$N_IND" --n_sites "$N_SITES" --max_kb_dist "$S6_MAX_KB_DIST" --pos "$STAGE6/all_snp.sites" --n_threads "$THREADS" --extend_out 1 --out "$STAGE6/allsnpsites.LD"
     prune_graph --header -v -n "$THREADS" --in "$STAGE6/allsnpsites.LD" --weight-field "r2" --weight-filter "dist <=10000 && r2 >= 0.5" --out "$STAGE6/allsnpsites.pos"
     sed 's/:/\t/g' "$STAGE6/allsnpsites.pos" | awk '$2!=""' | sort -k1 > "$STAGE6/LD_pruned_snp.sites"
     angsd sites index "$STAGE6/LD_pruned_snp.sites"
@@ -2271,6 +2281,7 @@ run_stage6_ld_pruning_sites() {
     echo "LD Pruning 前位點數: $N_SITES"
     echo "LD Pruning 後位點數: $n_sites_after"
     echo "ngsLD max_kb_dist (kb): $S6_MAX_KB_DIST"
+    echo "Stage5 檔案已複製到: $STAGE6/"
     echo "LD pruned sites map: $STAGE6/LD_pruned_snp.sites"
     echo "-------------------------------------------------------"
 }
