@@ -25,6 +25,7 @@ source "$CONF_FILE"
 # 環境依賴檢查 (Dependency Check)
 # ------------------------------------------------------------------------------
 ENV_CHECK_FILE=".pipeline_env_ready"
+PROJECT_NAME_FILE=".project_name"
 
 check_dependencies() {
     if [ -f "$ENV_CHECK_FILE" ]; then
@@ -1224,10 +1225,35 @@ select_analysis_scope() {
 }
 
 configure_project_name() {
-    echo "請輸入專案名稱,不要有特殊或空白字元"
-    echo "*分析產生的檔案都將以專案名稱為開頭"
-    read -p "請輸入: " BASE_PROJECT_NAME
-    PROJECT_NAME="$BASE_PROJECT_NAME"
+    local stored_name
+    if [ -s "$PROJECT_NAME_FILE" ]; then
+        stored_name=$(head -n1 "$PROJECT_NAME_FILE" | tr -d '\r' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+        if [[ "$stored_name" =~ ^[A-Za-z0-9._-]+$ ]]; then
+            BASE_PROJECT_NAME="$stored_name"
+            PROJECT_NAME="$stored_name"
+            echo "專案名稱已由 $PROJECT_NAME_FILE 載入：$PROJECT_NAME"
+            return
+        fi
+        echo "警告：$PROJECT_NAME_FILE 內容格式不正確，將重新設定專案名稱。"
+    fi
+
+    while true; do
+        echo "首次執行：尚未偵測到專案名稱記錄檔 ($PROJECT_NAME_FILE)"
+        echo "請輸入專案名稱（英數字、點、底線、連字號）"
+        read -p "請輸入: " BASE_PROJECT_NAME
+        if [[ -z "$BASE_PROJECT_NAME" ]]; then
+            echo "錯誤：專案名稱不可為空。"
+            continue
+        fi
+        if [[ ! "$BASE_PROJECT_NAME" =~ ^[A-Za-z0-9._-]+$ ]]; then
+            echo "錯誤：專案名稱僅允許英數字、點(.)、底線(_)與連字號(-)。"
+            continue
+        fi
+        PROJECT_NAME="$BASE_PROJECT_NAME"
+        printf "%s\n" "$PROJECT_NAME" > "$PROJECT_NAME_FILE"
+        echo "已建立 $PROJECT_NAME_FILE，專案名稱：$PROJECT_NAME"
+        break
+    done
 }
 
 select_ref_genome() {
