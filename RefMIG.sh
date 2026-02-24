@@ -1397,11 +1397,7 @@ collect_inputs() {
     fi
 
     if [[ "$RUN_S3" == "y" ]]; then
-        if [[ "$CHAIN_STAGES" == true || "$RUN_S2" == "y" ]]; then
-            :
-        else
-            select_bamfile_input "請選擇 Stage3 要使用的 BAM list (.bamfile)" BAM_LIST_PCA_INPUT
-        fi
+        :
     fi
 
     if [[ "$RUN_S4" == "y" ]]; then
@@ -1633,41 +1629,25 @@ run_stage2_alignment() {
 }
 
 run_stage3_pca() {
-    local summary_csv summary_csv_stage2 bam_list_local summary_source_dir
+    local summary_csv summary_csv_stage2 bam_list_local
     summary_csv_stage2="$STAGE2/${PROJECT_NAME}_mapping_summary.csv"
     summary_csv="$STAGE3/${PROJECT_NAME}_mapping_summary.csv"
     bam_list_local="$STAGE3/${PROJECT_NAME}_bwa_mapped.bamfile"
 
     echo "[Stage 3] 生成比對報表與 PCA 品質檢測..."
 
-    if [[ "$CHAIN_STAGES" == true ]]; then
-        if [ ! -s "$bam_list_local" ]; then
-            if [ -s "$STAGE2/${PROJECT_NAME}_bwa_mapped.bamfile" ]; then
-                cp "$STAGE2/${PROJECT_NAME}_bwa_mapped.bamfile" "$bam_list_local"
-            else
-                ls -d "$(realpath "$STAGE2/mapped_bam")"/*.bam > "$bam_list_local"
-            fi
-        fi
-        summary_source_dir="$STAGE2/mapping_results"
-    else
-        if [ -n "$BAM_LIST_PCA_INPUT" ]; then
-            normalize_bamfile_to_absolute "$BAM_LIST_PCA_INPUT" "$bam_list_local"
-        elif [ -s "$STAGE2/${PROJECT_NAME}_bwa_mapped.bamfile" ]; then
-            cp "$STAGE2/${PROJECT_NAME}_bwa_mapped.bamfile" "$bam_list_local"
-        elif [ -n "$BAM_LIST" ] && [ -s "$BAM_LIST" ]; then
-            normalize_bamfile_to_absolute "$BAM_LIST" "$bam_list_local"
-        else
-            echo "錯誤：Stage3 需要 BAM list，但尚未提供且前序 Stage2 也未產生。"
-            exit 1
-        fi
-        summary_source_dir="$STAGE3/mapping_results_from_bam"
-        mkdir -p "$summary_source_dir"
+    # Stage3 僅允許使用 Stage2 既有輸出，不再由 mapped_bam 重建 flagstat。
+    if [ ! -s "$STAGE2/${PROJECT_NAME}_bwa_mapped.bamfile" ]; then
+        echo "錯誤：Stage3 需要 Stage2 的 BAM list：$STAGE2/${PROJECT_NAME}_bwa_mapped.bamfile"
+        echo "請先執行 Stage2，或確認 project name 與目錄是否一致。"
+        exit 1
+    fi
+    cp "$STAGE2/${PROJECT_NAME}_bwa_mapped.bamfile" "$bam_list_local"
 
-        while IFS= read -r bam_path; do
-            [ ! -f "$bam_path" ] && { echo "錯誤：BAM 不存在: $bam_path"; exit 1; }
-            sample=$(basename "$bam_path" .bam)
-            samtools flagstat "$bam_path" > "$summary_source_dir/${sample}.txt"
-        done < "$bam_list_local"
+    if [ ! -s "$summary_csv_stage2" ]; then
+        echo "錯誤：Stage3 需要 Stage2 的 mapping summary CSV：$summary_csv_stage2"
+        echo "請先執行 Stage2。"
+        exit 1
     fi
 
     ask_to_run "PCA Analysis & Outlier Detection" "$summary_csv" SKIP_PCA
@@ -1688,12 +1668,7 @@ run_stage3_pca() {
         return
     fi
 
-    # mapping summary CSV 的主檔固定在 Stage2，Stage3 複製一份給 R 使用。
-    mkdir -p "$STAGE2"
-    if ! build_mapping_summary_csv "$summary_source_dir" "$summary_csv_stage2"; then
-        echo "錯誤：無法建立 Stage2 mapping summary CSV：$summary_csv_stage2"
-        exit 1
-    fi
+    # mapping summary CSV 的主檔固定在 Stage2，Stage3 只複製一份給 R 使用。
     cp "$summary_csv_stage2" "$summary_csv"
     if [ ! -s "$summary_csv" ]; then
         echo "錯誤：Stage3 無法複製 mapping summary CSV：$summary_csv"
@@ -1704,7 +1679,6 @@ run_stage3_pca() {
     echo "[Stage 3 進度回報]"
     echo "Mapping Summary 資料表已生成: $summary_csv"
     echo "Stage2 Mapping Summary 主檔: $summary_csv_stage2"
-    echo "對應統計來源: $summary_source_dir"
     echo "-------------------------------------------------------"
 
     ABS_STAGE3=$(realpath "$STAGE3")
