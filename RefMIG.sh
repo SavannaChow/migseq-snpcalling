@@ -146,6 +146,11 @@ STAGE9_SKIP_LD_VCF_INPUT=""
 STAGE9_LAST_RUN_DIR=""
 S9_RUN_STATS2="n"
 S6_MAX_KB_DIST="50"
+CURRENT_STAGE_DIR=""
+CURRENT_STAGE_CMD_FILE=""
+GLOBAL_CMD_FILE=""
+CMD_CAPTURE_GUARD=0
+TRACE_ALL_TO_MAIN_LOG=true
 
 # ------------------------------------------------------------------------------
 # 輔助函式
@@ -169,6 +174,77 @@ ask_to_run() {
     else
         eval "$skip_var_name=false"
     fi
+}
+
+start_stage_command_capture() {
+    local stage_dir="$1"
+    local stage_label="$2"
+    local safe_label
+    safe_label=$(echo "$stage_label" | sed 's/[^A-Za-z0-9._-]/_/g')
+    mkdir -p "$stage_dir"
+    CURRENT_STAGE_DIR="$stage_dir"
+    CURRENT_STAGE_CMD_FILE="$stage_dir/${PROJECT_NAME}_${safe_label}_commands.sh"
+    if [ ! -f "$CURRENT_STAGE_CMD_FILE" ]; then
+        {
+            echo "#!/bin/bash"
+            echo "# Auto-generated command log for $stage_label"
+            echo "# Generated at: $(date)"
+        } > "$CURRENT_STAGE_CMD_FILE"
+        chmod 755 "$CURRENT_STAGE_CMD_FILE" 2>/dev/null || true
+    fi
+}
+
+is_tracked_external_command() {
+    local first="$1"
+    case "$first" in
+        angsd|ngsLD|prune_graph|bcftools|bwa|samtools|fastp|parallel|Rscript|java|gzip|gunzip|cp|mv|find|ls|cat|cut|tail|sed|awk|sort|wc|realpath|structure|structureHarvester.py|git)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+debug_command_capture() {
+    local cmd first trimmed
+    [ "$CMD_CAPTURE_GUARD" -eq 1 ] && return 0
+    cmd="$BASH_COMMAND"
+    [ -z "$cmd" ] && return 0
+
+    # 移除前後空白
+    trimmed=$(echo "$cmd" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+    [ -z "$trimmed" ] && return 0
+
+    # 避免追蹤器自身輸出造成雜訊
+    case "$trimmed" in
+        debug_command_capture*|is_tracked_external_command*|start_stage_command_capture*|enable_command_capture*|trap\ *DEBUG*|CMD_CAPTURE_GUARD=*|return\ 0)
+            return 0
+            ;;
+    esac
+
+    # 只記錄外部命令，不記錄 echo/read/判斷等螢幕輸出或 shell 內建流程控制
+    first="${trimmed%%[[:space:]]*}"
+    first="${first#command}"
+    first=$(echo "$first" | sed 's/^[[:space:]]*//')
+
+    CMD_CAPTURE_GUARD=1
+    if is_tracked_external_command "$first"; then
+        echo "[CMD] $trimmed"
+        if [ -n "$GLOBAL_CMD_FILE" ]; then
+            printf "%s\n" "$trimmed" >> "$GLOBAL_CMD_FILE"
+        fi
+        if [ -n "$CURRENT_STAGE_CMD_FILE" ]; then
+            printf "%s\n" "$trimmed" >> "$CURRENT_STAGE_CMD_FILE"
+        fi
+    elif [ "$TRACE_ALL_TO_MAIN_LOG" = true ]; then
+        echo "[TRACE] $trimmed"
+    fi
+    CMD_CAPTURE_GUARD=0
+}
+
+enable_command_capture() {
+    trap 'debug_command_capture' DEBUG
 }
 
 write_project_context() {
@@ -1201,11 +1277,18 @@ start_logging() {
     LOG_DIR="00_Logs"
     mkdir -p "$LOG_DIR"
     LOG_FILE="$LOG_DIR/${PROJECT_NAME}_${current_time}.log"
+    GLOBAL_CMD_FILE="$LOG_DIR/${PROJECT_NAME}_${current_time}_commands.sh"
 
     echo "$HEADER_TEXT" > "$LOG_FILE"
     echo "專案名稱: $PROJECT_NAME" >> "$LOG_FILE"
     echo "啟動時間: $(date)" >> "$LOG_FILE"
     echo "-------------------------------------------------------" >> "$LOG_FILE"
+    {
+        echo "#!/bin/bash"
+        echo "# Auto-generated global command log"
+        echo "# Generated at: $(date)"
+    } > "$GLOBAL_CMD_FILE"
+    chmod 755 "$GLOBAL_CMD_FILE" 2>/dev/null || true
 
     exec > >(tee -i -a "$LOG_FILE") 2>&1
 }
@@ -2906,19 +2989,28 @@ main() {
     configure_project_name
     configure_stage_paths
     start_logging
+    enable_command_capture
     collect_inputs
     print_runtime_config
     confirm_run
     setup_output_dirs
 
-    [[ "$RUN_S1" == "y" ]] && run_stage1_fastp
-    [[ "$RUN_S2" == "y" ]] && run_stage2_alignment
+    if [[ "$RUN_S1" == "y" ]]; then
+        start_stage_command_capture "$STAGE1" "Stage1_Fastp"
+        run_stage1_fastp
+    fi
+    if [[ "$RUN_S2" == "y" ]]; then
+        start_stage_command_capture "$STAGE2" "Stage2_Alignment"
+        run_stage2_alignment
+    fi
 
     if [[ "$RUN_S3" == "y" ]]; then
+        start_stage_command_capture "$STAGE3" "Stage3_PCA"
         run_stage3_pca
     fi
 
     if [[ "$RUN_S4" == "y" ]]; then
+        start_stage_command_capture "$STAGE4" "Stage4_Clone"
         run_stage4_clone
     fi
 
@@ -2926,11 +3018,26 @@ main() {
         resolve_bam_list_for_stage5_to_7
     fi
 
-    [[ "$RUN_S5" == "y" ]] && run_stage5_all_snp_sites
-    [[ "$RUN_S6" == "y" ]] && run_stage6_ld_pruning_sites
-    [[ "$RUN_S7" == "y" ]] && run_stage7_final_snp
-    [[ "$RUN_S8" == "y" ]] && run_stage8_structure_auto
-    [[ "$RUN_S9" == "y" ]] && run_stage9_genetic_divergence
+    if [[ "$RUN_S5" == "y" ]]; then
+        start_stage_command_capture "$STAGE5" "Stage5_AllSNP"
+        run_stage5_all_snp_sites
+    fi
+    if [[ "$RUN_S6" == "y" ]]; then
+        start_stage_command_capture "$STAGE6" "Stage6_LDPruning"
+        run_stage6_ld_pruning_sites
+    fi
+    if [[ "$RUN_S7" == "y" ]]; then
+        start_stage_command_capture "$STAGE7" "Stage7_FinalSNP"
+        run_stage7_final_snp
+    fi
+    if [[ "$RUN_S8" == "y" ]]; then
+        start_stage_command_capture "$STAGE8" "Stage8_Structure"
+        run_stage8_structure_auto
+    fi
+    if [[ "$RUN_S9" == "y" ]]; then
+        start_stage_command_capture "$STAGE9" "Stage9_Divergence"
+        run_stage9_genetic_divergence
+    fi
 
     echo "======================================================="
     echo "分析結束: $(date)"
