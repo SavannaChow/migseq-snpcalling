@@ -1751,6 +1751,47 @@ print(pca_stat)
 R_CODE
 
     Rscript "$PCA_SCRIPT"
+    PCA_R_STATUS=$?
+    OUTLIER_FILE="$STAGE3/${PROJECT_NAME}_outliers.txt"
+
+    # Stage3 輸入/輸出資料契約保護：
+    # input:  X_bwa_mapped.bamfile
+    # output: X_after_pca.bamfile
+    if [ ! -s "$bam_list_local" ]; then
+        echo "錯誤：Stage3 輸入 bamfile 不存在或為空：$bam_list_local"
+        exit 1
+    fi
+    mkdir -p "$STAGE3"
+    if [ "$PCA_R_STATUS" -ne 0 ]; then
+        echo "[Stage 3] PCA 分析未完整完成，改用保底策略：保留全部樣本。"
+        : > "$OUTLIER_FILE"
+        cp "$bam_list_local" "$STAGE3/${PROJECT_NAME}_after_pca.bamfile"
+    else
+        # 不改 R code，直接以 R 產出的 outliers.txt 重新建立 after_pca.bamfile，
+        # 確保一定從 X_bwa_mapped.bamfile 正確移除 outlier 對應樣本。
+        if [ -s "$OUTLIER_FILE" ]; then
+            awk '
+            NR==FNR { out[$1]=1; next }
+            {
+              bam=$0
+              sample=bam
+              sub(/^.*\//, "", sample)
+              sub(/\.bam$/, "", sample)
+              if (!(sample in out)) print bam
+            }' "$OUTLIER_FILE" "$bam_list_local" > "$STAGE3/${PROJECT_NAME}_after_pca.bamfile"
+        else
+            cp "$bam_list_local" "$STAGE3/${PROJECT_NAME}_after_pca.bamfile"
+        fi
+    fi
+
+    if [ ! -s "$STAGE3/${PROJECT_NAME}_after_pca.bamfile" ]; then
+        echo "[Stage 3] after_pca 為空或不存在，啟用保底：保留全部樣本。"
+        cp "$bam_list_local" "$STAGE3/${PROJECT_NAME}_after_pca.bamfile"
+    fi
+    if [ ! -s "$STAGE3/${PROJECT_NAME}_after_pca.bamfile" ]; then
+        echo "錯誤：無法建立 $STAGE3/${PROJECT_NAME}_after_pca.bamfile"
+        exit 1
+    fi
 
     N_ORIG=$(wc -l < "$bam_list_local")
     N_AFTER=$(wc -l < "$STAGE3/${PROJECT_NAME}_after_pca.bamfile")
@@ -1763,7 +1804,6 @@ R_CODE
     echo "被剔除的樣本數: $N_DIFF"
     echo "-------------------------------------------------------"
 
-    OUTLIER_FILE="$STAGE3/${PROJECT_NAME}_outliers.txt"
     if [ -s "$OUTLIER_FILE" ]; then
         echo "偵測到 $N_DIFF 個 PCA Outliers:"
         cat "$OUTLIER_FILE"
