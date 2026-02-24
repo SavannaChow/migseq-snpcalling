@@ -25,7 +25,8 @@ source "$CONF_FILE"
 # 環境依賴檢查 (Dependency Check)
 # ------------------------------------------------------------------------------
 ENV_CHECK_FILE=".pipeline_env_ready"
-PROJECT_NAME_FILE=".project_name"
+PROJECT_CONTEXT_FILE="PROJECT_CONTEXT.txt"
+LEGACY_PROJECT_NAME_FILE=".project_name"
 
 check_dependencies() {
     if [ -f "$ENV_CHECK_FILE" ]; then
@@ -144,6 +145,7 @@ BAM_LIST_DIV_ALL_INPUT=""
 STAGE9_SKIP_LD_VCF_INPUT=""
 STAGE9_LAST_RUN_DIR=""
 S9_RUN_STATS2="n"
+S6_MAX_KB_DIST="50"
 
 # ------------------------------------------------------------------------------
 # 輔助函式
@@ -167,6 +169,27 @@ ask_to_run() {
     else
         eval "$skip_var_name=false"
     fi
+}
+
+write_project_context() {
+    {
+        printf "PROJECT_NAME=%s\n" "$PROJECT_NAME"
+        printf "REF_GENOME=%s\n" "$REF_GENOME"
+    } > "$PROJECT_CONTEXT_FILE"
+}
+
+prompt_stage6_max_kb_dist() {
+    local input
+    while true; do
+        read -p "max_kb_dist (kb) [$S6_MAX_KB_DIST]: " input
+        [ -z "$input" ] && input="$S6_MAX_KB_DIST"
+        input="${input//[[:space:]]/}"
+        if [[ "$input" =~ ^[0-9]+$ ]] && [ "$input" -ge 1 ]; then
+            S6_MAX_KB_DIST="$input"
+            return 0
+        fi
+        echo "錯誤：請輸入 >=1 的整數。"
+    done
 }
 
 build_mapping_summary_csv() {
@@ -1259,20 +1282,34 @@ select_analysis_scope() {
 }
 
 configure_project_name() {
-    local stored_name
-    if [ -s "$PROJECT_NAME_FILE" ]; then
-        stored_name=$(head -n1 "$PROJECT_NAME_FILE" | tr -d '\r' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+    local stored_name stored_ref legacy_name
+
+    if [ -s "$PROJECT_CONTEXT_FILE" ]; then
+        stored_name=$(awk -F'=' '/^PROJECT_NAME=/{sub(/^PROJECT_NAME=/,""); print; exit}' "$PROJECT_CONTEXT_FILE")
+        stored_ref=$(awk -F'=' '/^REF_GENOME=/{sub(/^REF_GENOME=/,""); print; exit}' "$PROJECT_CONTEXT_FILE")
         if [[ "$stored_name" =~ ^[A-Za-z0-9._-]+$ ]]; then
             BASE_PROJECT_NAME="$stored_name"
             PROJECT_NAME="$stored_name"
-            echo "專案名稱已由 $PROJECT_NAME_FILE 載入：$PROJECT_NAME"
+            [ -n "$stored_ref" ] && REF_GENOME="$stored_ref"
+            echo "專案名稱已由 $PROJECT_CONTEXT_FILE 載入：$PROJECT_NAME"
             return
         fi
-        echo "警告：$PROJECT_NAME_FILE 內容格式不正確，將重新設定專案名稱。"
+        echo "警告：$PROJECT_CONTEXT_FILE 的 PROJECT_NAME 格式不正確，將重新設定。"
+    fi
+
+    if [ -s "$LEGACY_PROJECT_NAME_FILE" ]; then
+        legacy_name=$(head -n1 "$LEGACY_PROJECT_NAME_FILE" | tr -d '\r' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+        if [[ "$legacy_name" =~ ^[A-Za-z0-9._-]+$ ]]; then
+            BASE_PROJECT_NAME="$legacy_name"
+            PROJECT_NAME="$legacy_name"
+            write_project_context
+            echo "已由舊檔 $LEGACY_PROJECT_NAME_FILE 轉換為 $PROJECT_CONTEXT_FILE：$PROJECT_NAME"
+            return
+        fi
     fi
 
     while true; do
-        echo "首次執行：尚未偵測到專案名稱記錄檔 ($PROJECT_NAME_FILE)"
+        echo "首次執行：尚未偵測到專案設定檔 ($PROJECT_CONTEXT_FILE)"
         echo "請輸入專案名稱（英數字、點、底線、連字號）"
         read -p "請輸入: " BASE_PROJECT_NAME
         if [[ -z "$BASE_PROJECT_NAME" ]]; then
@@ -1284,13 +1321,28 @@ configure_project_name() {
             continue
         fi
         PROJECT_NAME="$BASE_PROJECT_NAME"
-        printf "%s\n" "$PROJECT_NAME" > "$PROJECT_NAME_FILE"
-        echo "已建立 $PROJECT_NAME_FILE，專案名稱：$PROJECT_NAME"
+        write_project_context
+        echo "已建立 $PROJECT_CONTEXT_FILE，專案名稱：$PROJECT_NAME"
         break
     done
 }
 
 select_ref_genome() {
+    local stored_ref
+
+    # 若專案設定檔已有參考基因組且檔案存在，直接沿用，不重複詢問。
+    if [ -z "$REF_GENOME" ] && [ -s "$PROJECT_CONTEXT_FILE" ]; then
+        stored_ref=$(awk -F'=' '/^REF_GENOME=/{sub(/^REF_GENOME=/,""); print; exit}' "$PROJECT_CONTEXT_FILE")
+        [ -n "$stored_ref" ] && REF_GENOME="$stored_ref"
+    fi
+    if [ -n "$REF_GENOME" ] && [ -f "$REF_GENOME" ]; then
+        echo "參考基因組已由 $PROJECT_CONTEXT_FILE 載入：$REF_GENOME"
+    else
+        [ -n "$REF_GENOME" ] && echo "警告：$PROJECT_CONTEXT_FILE 記錄的參考基因組不存在，將重新選擇。"
+        REF_GENOME=""
+    fi
+
+    if [ -z "$REF_GENOME" ]; then
     while true; do
         source "$CONF_FILE"
         MAPFILE=()
@@ -1336,6 +1388,7 @@ select_ref_genome() {
             echo "錯誤：無效的選擇。"
         fi
     done
+    fi
 
     REF_GENOME=$(echo "$REF_GENOME" | sed "s/['\"]//g")
 
@@ -1354,6 +1407,7 @@ select_ref_genome() {
         samtools faidx "$REF_GENOME" || { echo "Samtools faidx 失敗"; exit 1; }
     fi
 
+    write_project_context
     echo "使用參考基因組: $REF_GENOME"
 }
 
@@ -1421,6 +1475,10 @@ collect_inputs() {
         fi
     fi
 
+    if [[ "$RUN_S6" == "y" ]]; then
+        prompt_stage6_max_kb_dist
+    fi
+
     if [[ "$RUN_S7" == "y" && "$CHAIN_STAGES" != true && "$RUN_S6" != "y" && "$RUN_S5" != "y" && "$RUN_S4" != "y" && "$RUN_S3" != "y" && "$RUN_S2" != "y" ]]; then
         select_bamfile_input "請選擇 Stage7 Final SNP 要使用的 BAM list (.bamfile)" BAM_LIST_FINAL_INPUT
     fi
@@ -1444,7 +1502,7 @@ collect_inputs() {
 
     if [[ "$RUN_S8" == "y" ]]; then
         if [[ "$RUN_S7" != "y" || "$RUN_S7_WITH_LD" != "y" ]]; then
-            select_str_input "請選擇 Stage8 要使用的 STRUCTURE .str 檔案（建議 Stage7 with LD pruning 輸出）" STR_INPUT
+            select_str_input "請選擇 Stage8 要使用的 STRUCTURE .str 檔案（建議 Stage7/LD_Pruned 輸出）" STR_INPUT
         fi
     fi
 
@@ -2120,7 +2178,7 @@ run_stage6_ld_pruning_sites() {
     fi
 
     N_SITES=$(wc -l < "$all_sites_file")
-    ngsLD --geno "$STAGE5/allsnps.geno" --verbose 1 --probs 1 --n_ind "$N_IND" --n_sites "$N_SITES" --max_kb_dist 50 --pos "$all_sites_file" --n_threads "$THREADS" --extend_out 1 --out "$STAGE6/allsnpsites.LD"
+    ngsLD --geno "$STAGE5/allsnps.geno" --verbose 1 --probs 1 --n_ind "$N_IND" --n_sites "$N_SITES" --max_kb_dist "$S6_MAX_KB_DIST" --pos "$all_sites_file" --n_threads "$THREADS" --extend_out 1 --out "$STAGE6/allsnpsites.LD"
     prune_graph --header -v -n "$THREADS" --in "$STAGE6/allsnpsites.LD" --weight-field "r2" --weight-filter "dist <=10000 && r2 >= 0.5" --out "$STAGE6/allsnpsites.pos"
     sed 's/:/\t/g' "$STAGE6/allsnpsites.pos" | awk '$2!=""' | sort -k1 > "$STAGE6/LD_pruned_snp.sites"
     angsd sites index "$STAGE6/LD_pruned_snp.sites"
@@ -2129,6 +2187,7 @@ run_stage6_ld_pruning_sites() {
     echo "[Stage 6 完成回報]"
     echo "LD Pruning 前位點數: $N_SITES"
     echo "LD Pruning 後位點數: $n_sites_after"
+    echo "ngsLD max_kb_dist (kb): $S6_MAX_KB_DIST"
     echo "LD pruned sites map: $STAGE6/LD_pruned_snp.sites"
     echo "-------------------------------------------------------"
 }
@@ -2164,7 +2223,7 @@ run_stage7_final_snp_with_mode() {
     local final_vcf_abs final_str_abs spid_file_abs jar_cmd_path
     final_vcf="${output_prefix}.vcf"
     final_str="${output_prefix}.str"
-    spid_file="$STAGE7/VCF2STR.spid"
+    spid_file="$(dirname "$output_prefix")/VCF2STR.spid"
 
     cat << 'SPID_CODE' > "$spid_file"
 # spid-file generated: Wed Feb 18 21:28:41 CST 2026
@@ -2271,27 +2330,33 @@ SPID_CODE
 
 run_stage7_final_snp() {
     local ld_sites all_sites
-    ask_to_run "Stage7 Final SNP Calling" "$STAGE7/${PROJECT_NAME}_snps_final_with_LD_Pruning.vcf" SKIP_S7
+    local stage7_ld_dir stage7_skip_dir
+    stage7_ld_dir="$STAGE7/LD_Pruned"
+    stage7_skip_dir="$STAGE7/Skip_LD_Pruning"
+
+    ask_to_run "Stage7 Final SNP Calling" "$stage7_ld_dir/${PROJECT_NAME}_snps_final_with_LD_Pruning.vcf" SKIP_S7
     if [[ "$SKIP_S7" == true ]]; then
         return
     fi
 
     if [[ "$RUN_S7_WITH_LD" == "y" ]]; then
+        mkdir -p "$stage7_ld_dir"
         if [[ "$RUN_S6" == "y" ]]; then
             ld_sites="$STAGE6/LD_pruned_snp.sites"
         else
             ld_sites="$LD_SITES_INPUT"
         fi
-        run_stage7_final_snp_with_mode "with_LD_Pruning" "$ld_sites" "$STAGE7/${PROJECT_NAME}_snps_final_with_LD_Pruning" "Final SNP with LD pruning"
+        run_stage7_final_snp_with_mode "with_LD_Pruning" "$ld_sites" "$stage7_ld_dir/${PROJECT_NAME}_snps_final_with_LD_Pruning" "Final SNP with LD pruning"
     fi
 
     if [[ "$RUN_S7_SKIP_LD" == "y" ]]; then
+        mkdir -p "$stage7_skip_dir"
         if [[ "$RUN_S5" == "y" ]]; then
             all_sites="$STAGE5/all_snp.sites"
         else
             all_sites="$ALL_SITES_INPUT"
         fi
-        run_stage7_final_snp_with_mode "Skip_LD_Pruning" "$all_sites" "$STAGE7/${PROJECT_NAME}_snps_final_Skip_LD_Pruning" "Skip LD-pruning SNP Calling"
+        run_stage7_final_snp_with_mode "Skip_LD_Pruning" "$all_sites" "$stage7_skip_dir/${PROJECT_NAME}_snps_final_Skip_LD_Pruning" "Skip LD-pruning SNP Calling"
     fi
 }
 
@@ -2324,8 +2389,8 @@ run_stage9_genetic_divergence() {
         fi
     fi
 
-    if [ -z "$STAGE9_SKIP_LD_VCF_INPUT" ] && [ -f "$STAGE7/${PROJECT_NAME}_snps_final_Skip_LD_Pruning.vcf" ]; then
-        STAGE9_SKIP_LD_VCF_INPUT="$STAGE7/${PROJECT_NAME}_snps_final_Skip_LD_Pruning.vcf"
+    if [ -z "$STAGE9_SKIP_LD_VCF_INPUT" ] && [ -f "$STAGE7/Skip_LD_Pruning/${PROJECT_NAME}_snps_final_Skip_LD_Pruning.vcf" ]; then
+        STAGE9_SKIP_LD_VCF_INPUT="$STAGE7/Skip_LD_Pruning/${PROJECT_NAME}_snps_final_Skip_LD_Pruning.vcf"
     fi
 
     stage9_dir="$STAGE9/divergence"
@@ -2543,8 +2608,8 @@ run_stage8_structure_auto() {
 
     if [ -n "$STR_INPUT" ]; then
         stage7_str_input="$STR_INPUT"
-    elif [ -f "$STAGE7/${PROJECT_NAME}_snps_final_with_LD_Pruning.str" ]; then
-        stage7_str_input="$STAGE7/${PROJECT_NAME}_snps_final_with_LD_Pruning.str"
+    elif [ -f "$STAGE7/LD_Pruned/${PROJECT_NAME}_snps_final_with_LD_Pruning.str" ]; then
+        stage7_str_input="$STAGE7/LD_Pruned/${PROJECT_NAME}_snps_final_with_LD_Pruning.str"
     else
         stage7_str_input="$STR_INPUT"
     fi
@@ -2869,8 +2934,8 @@ main() {
 
     echo "======================================================="
     echo "分析結束: $(date)"
-    [[ "$RUN_S7" == "y" ]] && [[ "$RUN_S7_WITH_LD" == "y" ]] && echo "產出 VCF(with LD pruning): $STAGE7/${PROJECT_NAME}_snps_final_with_LD_Pruning.vcf"
-    [[ "$RUN_S7" == "y" ]] && [[ "$RUN_S7_SKIP_LD" == "y" ]] && echo "產出 VCF(skip LD pruning): $STAGE7/${PROJECT_NAME}_snps_final_Skip_LD_Pruning.vcf"
+    [[ "$RUN_S7" == "y" ]] && [[ "$RUN_S7_WITH_LD" == "y" ]] && echo "產出 VCF(with LD pruning): $STAGE7/LD_Pruned/${PROJECT_NAME}_snps_final_with_LD_Pruning.vcf"
+    [[ "$RUN_S7" == "y" ]] && [[ "$RUN_S7_SKIP_LD" == "y" ]] && echo "產出 VCF(skip LD pruning): $STAGE7/Skip_LD_Pruning/${PROJECT_NAME}_snps_final_Skip_LD_Pruning.vcf"
     [[ "$RUN_S9" == "y" ]] && echo "Stage9 輸出資料夾: $STAGE9_LAST_RUN_DIR"
     echo "日誌位置: $LOG_FILE"
     echo "VCF可用PGDSpider做轉換"
