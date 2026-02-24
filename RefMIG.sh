@@ -2178,7 +2178,7 @@ run_stage8_no_ld_snp() {
     fi
 
     echo "[Stage 8] 執行 No-LD SNP Calling..."
-    angsd -b "$BAM_LIST" -GL 1 -maxHetFreq 0.5 -uniqueOnly 1 -remove_bads 1 -minMapQ 30 -baq 1 -setMinDepth 5 -SNP_pval 1e-5 -skipTriallelic 1 -doHWE 1 -Hetbias_pval 0.00001 -minInd "$MIN_IND" -doMajorMinor 1 -doMaf 1 -minMaf "$S8_MINMAF" -dosnpstat 1 -doBcf 1 --ignore-RG 0 -doPost 2 -doGeno 2 -doCounts 1 -P 1 -out "$STAGE8/allsnps"
+    angsd -b "$BAM_LIST" -GL 1 -maxHetFreq 0.5 -uniqueOnly 1 -remove_bads 1 -minMapQ 30 -setMinDepth 5 -SNP_pval 1e-5 -skipTriallelic 1 -doHWE 1 -Hetbias_pval 0.00001 -minInd "$MIN_IND" -doMajorMinor 1 -doMaf 1 -minMaf "$S8_MINMAF" -dosnpstat 1 -doBcf 1 --ignore-RG 0 -doPost 2 -doGeno 2 -doCounts 1 -P 1 -out "$STAGE8/allsnps"
 
     bcftools view -O v -o "$STAGE8/${PROJECT_NAME}_snps_noLD.vcf" "$STAGE8/allsnps.bcf"
     N_NO_LD_SNPS=$(bcftools view -H "$STAGE8/${PROJECT_NAME}_snps_noLD.vcf" | wc -l)
