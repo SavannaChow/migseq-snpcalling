@@ -169,6 +169,40 @@ ask_to_run() {
     fi
 }
 
+build_mapping_summary_csv() {
+    local source_dir="$1"
+    local out_csv="$2"
+    local txt_files=()
+    local f sample total mapped properly_paired with_mate singletons
+    local mate_diff_chr mate_diff_chr_q5 secondary supplementary duplicates paired_in_seq read1 read2
+
+    txt_files=("$source_dir"/*.txt)
+    if [ "${#txt_files[@]}" -eq 0 ] || [ ! -e "${txt_files[0]}" ]; then
+        echo "錯誤：找不到 mapping 統計檔案（$source_dir/*.txt）。"
+        return 1
+    fi
+
+    echo "Sample,Total,Mapped,Properly_Paired,With_Mate_Mapped,Singletons,Mate_Diff_Chr,Mate_Diff_Chr_MapQ5,Secondary,Supplementary,Duplicates,Paired_in_Seq,Read1,Read2" > "$out_csv"
+
+    for f in "${txt_files[@]}"; do
+        sample=$(basename "$f" .txt)
+        total=$(grep "in total" "$f" | head -1 | awk '{print $1}')
+        mapped=$(grep " mapped (" "$f" | awk '{print $1}')
+        properly_paired=$(grep "properly paired" "$f" | awk '{print $1}')
+        with_mate=$(grep "with itself and mate mapped" "$f" | awk '{print $1}')
+        singletons=$(grep "singletons" "$f" | awk '{print $1}')
+        mate_diff_chr=$(grep "with mate mapped to a different chr$" "$f" | awk '{print $1}')
+        mate_diff_chr_q5=$(grep "with mate mapped to a different chr (mapQ>=5)" "$f" | awk '{print $1}')
+        secondary=$(grep " secondary" "$f" | awk '{print $1}')
+        supplementary=$(grep " supplementary" "$f" | awk '{print $1}')
+        duplicates=$(grep " duplicates" "$f" | awk '{print $1}')
+        paired_in_seq=$(grep "paired in sequencing" "$f" | awk '{print $1}')
+        read1=$(grep " read1" "$f" | awk '{print $1}')
+        read2=$(grep " read2" "$f" | awk '{print $1}')
+        echo "$sample,$total,$mapped,$properly_paired,$with_mate,$singletons,$mate_diff_chr,$mate_diff_chr_q5,$secondary,$supplementary,$duplicates,$paired_in_seq,$read1,$read2" >> "$out_csv"
+    done
+}
+
 setup_output_dirs() {
     if [[ "$RUN_S1" == "y" ]]; then
         mkdir -p "$STAGE1/trim" "$STAGE1/fastp_report"
@@ -1579,6 +1613,12 @@ run_stage2_alignment() {
     ls -d "$(realpath "$STAGE2/mapped_bam")"/*.bam > "$STAGE2/${PROJECT_NAME}_bwa_mapped.bamfile"
     BAM_LIST="$STAGE2/${PROJECT_NAME}_bwa_mapped.bamfile"
 
+    # Stage2 固定輸出 mapping summary CSV，供 Stage3 直接複製使用
+    if ! build_mapping_summary_csv "$STAGE2/mapping_results" "$STAGE2/${PROJECT_NAME}_mapping_summary.csv"; then
+        echo "錯誤：Stage2 無法產生 mapping summary CSV。"
+        exit 1
+    fi
+
     N_MAPPED=$(ls "$STAGE2/mapped_bam/"*.bam | wc -l)
     echo "-------------------------------------------------------"
     echo "[Stage 2 完成回報]"
@@ -1587,12 +1627,14 @@ run_stage2_alignment() {
     echo "完成步驟: SAM轉換、BAM過濾(F4)、排序與建立索引"
     echo "產出的比對檔案(BAM): $STAGE2/mapped_bam/"
     echo "比對率統計結果: $STAGE2/mapping_results/"
+    echo "Mapping Summary CSV: $STAGE2/${PROJECT_NAME}_mapping_summary.csv"
     echo "共計完成比對樣本數: $N_MAPPED"
     echo "-------------------------------------------------------"
 }
 
 run_stage3_pca() {
-    local summary_csv bam_list_local summary_source_dir
+    local summary_csv summary_csv_stage2 bam_list_local summary_source_dir
+    summary_csv_stage2="$STAGE2/${PROJECT_NAME}_mapping_summary.csv"
     summary_csv="$STAGE3/${PROJECT_NAME}_mapping_summary.csv"
     bam_list_local="$STAGE3/${PROJECT_NAME}_bwa_mapped.bamfile"
 
@@ -1646,30 +1688,22 @@ run_stage3_pca() {
         return
     fi
 
-    echo "輸出mapping表頭與數據"
-    echo "Sample,Total,Mapped,Properly_Paired,With_Mate_Mapped,Singletons,Mate_Diff_Chr,Mate_Diff_Chr_MapQ5,Secondary,Supplementary,Duplicates,Paired_in_Seq,Read1,Read2" > "$summary_csv"
-
-    for f in "${summary_source_dir}"/*.txt; do
-        sample=$(basename "$f" .txt)
-        total=$(grep "in total" "$f" | head -1 | awk '{print $1}')
-        mapped=$(grep " mapped (" "$f" | awk '{print $1}')
-        properly_paired=$(grep "properly paired" "$f" | awk '{print $1}')
-        with_mate=$(grep "with itself and mate mapped" "$f" | awk '{print $1}')
-        singletons=$(grep "singletons" "$f" | awk '{print $1}')
-        mate_diff_chr=$(grep "with mate mapped to a different chr$" "$f" | awk '{print $1}')
-        mate_diff_chr_q5=$(grep "with mate mapped to a different chr (mapQ>=5)" "$f" | awk '{print $1}')
-        secondary=$(grep " secondary" "$f" | awk '{print $1}')
-        supplementary=$(grep " supplementary" "$f" | awk '{print $1}')
-        duplicates=$(grep " duplicates" "$f" | awk '{print $1}')
-        paired_in_seq=$(grep "paired in sequencing" "$f" | awk '{print $1}')
-        read1=$(grep " read1" "$f" | awk '{print $1}')
-        read2=$(grep " read2" "$f" | awk '{print $1}')
-        echo "$sample,$total,$mapped,$properly_paired,$with_mate,$singletons,$mate_diff_chr,$mate_diff_chr_q5,$secondary,$supplementary,$duplicates,$paired_in_seq,$read1,$read2" >> "$summary_csv"
-    done
+    # mapping summary CSV 的主檔固定在 Stage2，Stage3 複製一份給 R 使用。
+    mkdir -p "$STAGE2"
+    if ! build_mapping_summary_csv "$summary_source_dir" "$summary_csv_stage2"; then
+        echo "錯誤：無法建立 Stage2 mapping summary CSV：$summary_csv_stage2"
+        exit 1
+    fi
+    cp "$summary_csv_stage2" "$summary_csv"
+    if [ ! -s "$summary_csv" ]; then
+        echo "錯誤：Stage3 無法複製 mapping summary CSV：$summary_csv"
+        exit 1
+    fi
 
     echo "-------------------------------------------------------"
     echo "[Stage 3 進度回報]"
     echo "Mapping Summary 資料表已生成: $summary_csv"
+    echo "Stage2 Mapping Summary 主檔: $summary_csv_stage2"
     echo "對應統計來源: $summary_source_dir"
     echo "-------------------------------------------------------"
 
