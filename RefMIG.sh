@@ -2486,7 +2486,7 @@ run_stage7_final_snp_with_mode() {
     local output_prefix="$3"
     local mode_label="$4"
     local vcf_sample_map_file
-    local sites_file_abs bam_list_abs ref_genome_abs output_dir_abs output_prefix_abs
+    local sites_file_abs bam_list_arg ref_genome_abs output_dir_abs output_prefix_abs
     local final_vcf final_str spid_file pgdspider_jar pgd_cmd
     local final_vcf_abs final_str_abs spid_file_abs jar_cmd_path
     local output_prefix_dirname output_prefix_basename
@@ -2515,11 +2515,10 @@ run_stage7_final_snp_with_mode() {
     output_dir_abs=$(realpath "$output_prefix_dirname")
     output_prefix_abs="${output_dir_abs}/${output_prefix_basename}"
     ref_genome_abs=$(realpath "$REF_GENOME")
-    bam_list_abs="${output_dir_abs}/.${PROJECT_NAME}_${target_mode}_abs.bamfile"
-    normalize_bamfile_to_absolute "$BAM_LIST" "$bam_list_abs"
+    bam_list_arg=$(realpath "$BAM_LIST")
 
     echo "[Stage 7] 執行 $mode_label ..."
-    angsd -sites "$sites_file_abs" -b "$bam_list_abs" -GL 1 -P 1 -minInd "$MIN_IND" -minMapQ 20 -minQ 25 -sb_pval 1e-5 -Hetbias_pval 1e-5 -skipTriallelic 1 -snp_pval 1e-5 -minMaf 0.05 -doMajorMinor 1 -doMaf 1 -doCounts 1 -doGlf 2 -dosnpstat 1 -doPost 1 -doGeno 8 -doBcf 1 --ignore-RG 0 -doHWE 1 -ref "$ref_genome_abs" -out "$output_prefix_abs"
+    angsd -sites "$sites_file_abs" -b "$bam_list_arg" -GL 1 -P 1 -minInd "$MIN_IND" -minMapQ 20 -minQ 25 -sb_pval 1e-5 -Hetbias_pval 1e-5 -skipTriallelic 1 -snp_pval 1e-5 -minMaf 0.05 -doMajorMinor 1 -doMaf 1 -doCounts 1 -doGlf 2 -dosnpstat 1 -doPost 1 -doGeno 8 -doBcf 1 --ignore-RG 0 -doHWE 1 -ref "$ref_genome_abs" -out "$output_prefix_abs"
 
     bcftools view -O v -o "${output_prefix_abs}.vcf" "${output_prefix_abs}.bcf"
     vcf_sample_map_file="${output_prefix_abs}_vcf_sample_rename_map.tsv"
@@ -2634,15 +2633,15 @@ SPID_CODE
     echo "[$mode_label] SNP 數量: $FINAL_SNPS"
     echo "[$mode_label] VCF: $final_vcf_abs"
     echo "[$mode_label] STR: $final_str_abs"
-
-    rm -f "$bam_list_abs"
 }
 
 run_stage7_final_snp() {
     local ld_sites all_sites
     local stage7_ld_dir stage7_skip_dir
+    local original_bam_list
     stage7_ld_dir="$STAGE7/LD_Pruned"
     stage7_skip_dir="$STAGE7/Skip_LD_Pruning"
+    original_bam_list="$BAM_LIST"
 
     ask_to_run "Stage7 Final SNP Calling" "$stage7_ld_dir/${PROJECT_NAME}_snps_final_with_LD_Pruning.vcf" SKIP_S7
     if [[ "$SKIP_S7" == true ]]; then
@@ -2651,6 +2650,14 @@ run_stage7_final_snp() {
 
     if [[ "$RUN_S7_WITH_LD" == "y" ]]; then
         mkdir -p "$stage7_ld_dir"
+        if [ -s "$STAGE4/${PROJECT_NAME}_after_clones.bamfile" ]; then
+            BAM_LIST="$STAGE4/${PROJECT_NAME}_after_clones.bamfile"
+        fi
+        if [ ! -s "$BAM_LIST" ]; then
+            echo "錯誤：Stage7 with LD pruning 需要 clone-filtered bamfile。"
+            echo "請先確認：$STAGE4/${PROJECT_NAME}_after_clones.bamfile"
+            exit 1
+        fi
         if [[ "$RUN_S6" == "y" ]]; then
             ld_sites="$STAGE6/LD_pruned_snp.sites"
         else
@@ -2661,6 +2668,9 @@ run_stage7_final_snp() {
 
     if [[ "$RUN_S7_SKIP_LD" == "y" ]]; then
         mkdir -p "$stage7_skip_dir"
+        if [ -s "$original_bam_list" ]; then
+            BAM_LIST="$original_bam_list"
+        fi
         if [[ "$RUN_S5" == "y" ]]; then
             all_sites="$STAGE5/all_snp.sites"
         else
