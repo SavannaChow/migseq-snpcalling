@@ -319,7 +319,7 @@ CURRENT_STAGE_DIR=""
 CURRENT_STAGE_CMD_FILE=""
 GLOBAL_CMD_FILE=""
 CMD_CAPTURE_GUARD=0
-TRACE_ALL_TO_MAIN_LOG=true
+TRACE_ALL_TO_MAIN_LOG=false
 
 # ------------------------------------------------------------------------------
 # 輔助函式
@@ -405,7 +405,7 @@ debug_command_capture() {
 
     CMD_CAPTURE_GUARD=1
     if is_tracked_external_command "$first"; then
-        echo "[CMD] $trimmed"
+        echo "[CMD] $trimmed" >&2
         if [ -n "$GLOBAL_CMD_FILE" ]; then
             printf "%s\n" "$trimmed" >> "$GLOBAL_CMD_FILE"
         fi
@@ -413,7 +413,7 @@ debug_command_capture() {
             printf "%s\n" "$trimmed" >> "$CURRENT_STAGE_CMD_FILE"
         fi
     elif [ "$TRACE_ALL_TO_MAIN_LOG" = true ] && [ "$stage8_echo_trace_suppressed" = false ]; then
-        echo "[TRACE] $trimmed"
+        echo "[TRACE] $trimmed" >&2
     fi
     CMD_CAPTURE_GUARD=0
 }
