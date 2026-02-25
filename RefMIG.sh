@@ -2637,6 +2637,7 @@ SPID_CODE
 
 run_stage7_final_snp() {
     local ld_sites all_sites
+    local ld_sites_local
     local stage7_ld_dir stage7_skip_dir
     local original_bam_list
     stage7_ld_dir="$STAGE7/LD_Pruned"
@@ -2663,7 +2664,15 @@ run_stage7_final_snp() {
         else
             ld_sites="$LD_SITES_INPUT"
         fi
-        run_stage7_final_snp_with_mode "with_LD_Pruning" "$ld_sites" "$stage7_ld_dir/${PROJECT_NAME}_snps_final_with_LD_Pruning" "Final SNP with LD pruning"
+        if [ ! -f "$ld_sites" ]; then
+            echo "錯誤：找不到 Stage7(with LD pruning) 所需 sites：$ld_sites"
+            exit 1
+        fi
+        ld_sites_local="$stage7_ld_dir/LD_pruned_snp.sites"
+        cp -f "$ld_sites" "$ld_sites_local"
+        rm -f "${ld_sites_local}.idx"
+        angsd sites index "$ld_sites_local"
+        run_stage7_final_snp_with_mode "with_LD_Pruning" "$ld_sites_local" "$stage7_ld_dir/${PROJECT_NAME}_snps_final_with_LD_Pruning" "Final SNP with LD pruning"
     fi
 
     if [[ "$RUN_S7_SKIP_LD" == "y" ]]; then
