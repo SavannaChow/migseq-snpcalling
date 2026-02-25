@@ -298,7 +298,6 @@ RUN_S7_SKIP_LD="n"
 RUN_MODE="2"
 AUTO_PCA_CHOICE="2"
 AUTO_CLONE_CHOICE="2"
-CHAIN_STAGES=false
 RUN_SCOPE=""
 
 PROJECT_NAME=""
@@ -1491,7 +1490,6 @@ print_runtime_config() {
     [ -n "$REF_GENOME" ] && echo "  參考基因組 : $REF_GENOME"
     echo "  腳本路徑   : $script_path"
     echo "  日誌檔案   : $LOG_FILE"
-    echo "  流程串接   : $([[ "$CHAIN_STAGES" == true ]] && echo "啟用" || echo "停用")"
     echo "======================================================="
     echo ""
 }
@@ -1562,7 +1560,9 @@ select_analysis_scope() {
             read -p "執行 Stage 7 Final SNP Calling? (y/n): " RUN_S7
             read -p "執行 Stage 8 Structure Auto Generator? (y/n): " RUN_S8
             read -p "執行 Stage 9 Genetic Divergence? (y/n): " RUN_S9
-            CHAIN_STAGES=false
+##old code##
+#            CHAIN_STAGES=false
+##old code##
             ;;
         *)
             echo "錯誤：無效選項。"
@@ -1729,7 +1729,7 @@ collect_inputs() {
     fi
 
     if [[ "$RUN_S2" == "y" ]]; then
-        if [[ "$CHAIN_STAGES" == true || "$RUN_S1" == "y" ]]; then
+        if [[ "$RUN_S1" == "y" ]]; then
             TRIM_INPUT_DIR="$STAGE1/trim"
         else
             select_trim_dir_input "請選擇 Stage2 要用的 trimmed fastq 資料夾路徑" TRIM_INPUT_DIR
@@ -1745,18 +1745,18 @@ collect_inputs() {
     fi
 
     if [[ "$RUN_S4" == "y" ]]; then
-        if [[ "$CHAIN_STAGES" == true || "$RUN_S3" == "y" || "$RUN_S2" == "y" ]]; then
+        if [[ "$RUN_S3" == "y" || "$RUN_S2" == "y" ]]; then
             :
         else
             select_bamfile_input "請選擇 Stage4 clone detection 要使用的 BAM list (.bamfile)" BAM_LIST_CLONE_INPUT
         fi
     fi
 
-    if [[ "$RUN_S5" == "y" && "$CHAIN_STAGES" != true && "$RUN_S4" != "y" && "$RUN_S3" != "y" && "$RUN_S2" != "y" ]]; then
+    if [[ "$RUN_S5" == "y" && "$RUN_S4" != "y" && "$RUN_S3" != "y" && "$RUN_S2" != "y" ]]; then
         select_bamfile_input "請選擇 Stage5 All SNP sites 要使用的 BAM list (.bamfile)" BAM_LIST_LD_INPUT
     fi
 
-    if [[ "$RUN_S6" == "y" && "$CHAIN_STAGES" != true ]]; then
+    if [[ "$RUN_S6" == "y" ]]; then
         if [[ "$RUN_S5" != "y" && "$RUN_S4" != "y" && "$RUN_S3" != "y" && "$RUN_S2" != "y" ]]; then
             select_bamfile_input "請選擇 Stage6 LD pruning 要使用的 BAM list (.bamfile)" BAM_LIST_FINAL_INPUT
         fi
@@ -1769,7 +1769,7 @@ collect_inputs() {
         prompt_stage6_max_kb_dist
     fi
 
-    if [[ "$RUN_S7" == "y" && "$CHAIN_STAGES" != true && "$RUN_S6" != "y" && "$RUN_S5" != "y" && "$RUN_S4" != "y" && "$RUN_S3" != "y" && "$RUN_S2" != "y" ]]; then
+    if [[ "$RUN_S7" == "y" && "$RUN_S6" != "y" && "$RUN_S5" != "y" && "$RUN_S4" != "y" && "$RUN_S3" != "y" && "$RUN_S2" != "y" ]]; then
         select_bamfile_input "請選擇 Stage7 Final SNP 要使用的 BAM list (.bamfile)" BAM_LIST_FINAL_INPUT
     fi
 
@@ -1835,7 +1835,9 @@ confirm_run() {
     [ -n "$RAW_PATH" ] && printf "  %-15s : %s\n" "原始資料路徑" "$RAW_PATH"
     [ -n "$REF_GENOME" ] && printf "  %-15s : %s\n" "參考基因組" "$REF_GENOME"
     [[ "$RUN_S3" == "y" || "$RUN_S4" == "y" ]] && printf "  %-15s : %s\n" "執行模式" "$MODE_STR"
-    printf "  %-15s : %s\n" "流程串接" "$([[ "$CHAIN_STAGES" == true ]] && echo "啟用" || echo "停用")"
+##old code##
+#    printf "  %-15s : %s\n" "流程串接" "$([[ "$CHAIN_STAGES" == true ]] && echo "啟用" || echo "停用")"
+##old code##
     echo "  運行範圍       :"
     [[ "$RUN_S1" == "y" ]] && echo "    - Stage 1 Fastp Trimming"
     [[ "$RUN_S2" == "y" ]] && echo "    - Stage 2 BWA Alignment"
