@@ -413,6 +413,8 @@ debug_command_capture() {
 }
 
 enable_command_capture() {
+    # 讓 DEBUG trap 也能追蹤 function 內部命令
+    set -o functrace 2>/dev/null || true
     trap 'debug_command_capture' DEBUG
 }
 
