@@ -95,17 +95,19 @@ check_dependencies() {
     fi
 }
 
-fetch_url_to_stdout() {
-    local url="$1"
-    if command -v curl >/dev/null 2>&1; then
-        curl -fsSL --max-time "$SELF_UPDATE_TIMEOUT" "$url"
-        return $?
-    elif command -v wget >/dev/null 2>&1; then
-        wget -qO- --timeout="$SELF_UPDATE_TIMEOUT" "$url"
-        return $?
-    fi
-    return 127
-}
+##old code##
+# fetch_url_to_stdout() {
+#     local url="$1"
+#     if command -v curl >/dev/null 2>&1; then
+#         curl -fsSL --max-time "$SELF_UPDATE_TIMEOUT" "$url"
+#         return $?
+#     elif command -v wget >/dev/null 2>&1; then
+#         wget -qO- --timeout="$SELF_UPDATE_TIMEOUT" "$url"
+#         return $?
+#     fi
+#     return 127
+# }
+##old code##
 
 download_url_to_file() {
     local url="$1"
@@ -131,49 +133,51 @@ sha256_file() {
     fi
 }
 
-self_update_probe() {
-    local script_path tmp_remote remote_version
-
-    UPDATE_STATUS="未檢查"
-    UPDATE_REMOTE_VERSION="unknown"
-    UPDATE_LOCAL_SHA=""
-    UPDATE_REMOTE_SHA=""
-
-    [ "${REFMIG_SKIP_UPDATE_CHECK:-0}" = "1" ] && {
-        UPDATE_STATUS="已停用檢查"
-        return 0
-    }
-
-    script_path=$(realpath "${BASH_SOURCE[0]}" 2>/dev/null || true)
-    [ -z "$script_path" ] && {
-        UPDATE_STATUS="無法判斷目前腳本路徑"
-        return 1
-    }
-    [ ! -f "$script_path" ] && {
-        UPDATE_STATUS="目前腳本不存在"
-        return 1
-    }
-
-    tmp_remote=$(mktemp)
-    if ! download_url_to_file "$SELF_UPDATE_REPO_RAW" "$tmp_remote"; then
-        rm -f "$tmp_remote"
-        UPDATE_STATUS="檢查失敗（無法連線）"
-        return 1
-    fi
-
-    UPDATE_LOCAL_SHA=$(sha256_file "$script_path")
-    UPDATE_REMOTE_SHA=$(sha256_file "$tmp_remote")
-    remote_version=$(awk -F'"' '/^APP_VERSION=/{print $2; exit}' "$tmp_remote")
-    [ -n "$remote_version" ] && UPDATE_REMOTE_VERSION="$remote_version"
-
-    if [ -n "$UPDATE_LOCAL_SHA" ] && [ "$UPDATE_LOCAL_SHA" = "$UPDATE_REMOTE_SHA" ]; then
-        UPDATE_STATUS="否（已是最新）"
-    else
-        UPDATE_STATUS="是（可更新到 ${UPDATE_REMOTE_VERSION}）"
-    fi
-    rm -f "$tmp_remote"
-    return 0
-}
+##old code##
+# self_update_probe() {
+#     local script_path tmp_remote remote_version
+#
+#     UPDATE_STATUS="未檢查"
+#     UPDATE_REMOTE_VERSION="unknown"
+#     UPDATE_LOCAL_SHA=""
+#     UPDATE_REMOTE_SHA=""
+#
+#     [ "${REFMIG_SKIP_UPDATE_CHECK:-0}" = "1" ] && {
+#         UPDATE_STATUS="已停用檢查"
+#         return 0
+#     }
+#
+#     script_path=$(realpath "${BASH_SOURCE[0]}" 2>/dev/null || true)
+#     [ -z "$script_path" ] && {
+#         UPDATE_STATUS="無法判斷目前腳本路徑"
+#         return 1
+#     }
+#     [ ! -f "$script_path" ] && {
+#         UPDATE_STATUS="目前腳本不存在"
+#         return 1
+#     }
+#
+#     tmp_remote=$(mktemp)
+#     if ! download_url_to_file "$SELF_UPDATE_REPO_RAW" "$tmp_remote"; then
+#         rm -f "$tmp_remote"
+#         UPDATE_STATUS="檢查失敗（無法連線）"
+#         return 1
+#     fi
+#
+#     UPDATE_LOCAL_SHA=$(sha256_file "$script_path")
+#     UPDATE_REMOTE_SHA=$(sha256_file "$tmp_remote")
+#     remote_version=$(awk -F'"' '/^APP_VERSION=/{print $2; exit}' "$tmp_remote")
+#     [ -n "$remote_version" ] && UPDATE_REMOTE_VERSION="$remote_version"
+#
+#     if [ -n "$UPDATE_LOCAL_SHA" ] && [ "$UPDATE_LOCAL_SHA" = "$UPDATE_REMOTE_SHA" ]; then
+#         UPDATE_STATUS="否（已是最新）"
+#     else
+#         UPDATE_STATUS="是（可更新到 ${UPDATE_REMOTE_VERSION}）"
+#     fi
+#     rm -f "$tmp_remote"
+#     return 0
+# }
+##old code##
 
 self_update_check_and_apply() {
     local script_path tmp_remote local_sha remote_sha backup_path resp
@@ -302,12 +306,9 @@ BASE_PROJECT_NAME=""
 RAW_PATH=""
 REF_GENOME=""
 BAM_LIST=""
-SUMMARY_INPUT_DIR=""
-MAPPED_BAM_DIR=""
 TRIM_INPUT_DIR=""
 LD_SITES_INPUT=""
 ALL_SITES_INPUT=""
-BAM_LIST_PCA_INPUT=""
 STR_INPUT=""
 S7_STR_FILE=""
 BAM_LIST_DIV_ALL_INPUT=""
@@ -509,27 +510,38 @@ setup_output_dirs() {
 }
 
 configure_stage_paths() {
-    if [[ "$CHAIN_STAGES" == true ]]; then
-        STAGE1="$STAGE1_BASE"
-        STAGE2="$STAGE2_BASE"
-        STAGE3="$STAGE3_BASE"
-        STAGE4="$STAGE4_BASE"
-        STAGE5="$STAGE5_BASE"
-        STAGE6="$STAGE6_BASE"
-        STAGE7="$STAGE7_BASE"
-        STAGE8="$STAGE8_BASE"
-        STAGE9="$STAGE9_BASE"
-    else
-        STAGE1="$STAGE1_BASE"
-        STAGE2="$STAGE2_BASE"
-        STAGE3="$STAGE3_BASE"
-        STAGE4="$STAGE4_BASE"
-        STAGE5="$STAGE5_BASE"
-        STAGE6="$STAGE6_BASE"
-        STAGE7="$STAGE7_BASE"
-        STAGE8="$STAGE8_BASE"
-        STAGE9="$STAGE9_BASE"
-    fi
+##old code##
+#    if [[ "$CHAIN_STAGES" == true ]]; then
+#        STAGE1="$STAGE1_BASE"
+#        STAGE2="$STAGE2_BASE"
+#        STAGE3="$STAGE3_BASE"
+#        STAGE4="$STAGE4_BASE"
+#        STAGE5="$STAGE5_BASE"
+#        STAGE6="$STAGE6_BASE"
+#        STAGE7="$STAGE7_BASE"
+#        STAGE8="$STAGE8_BASE"
+#        STAGE9="$STAGE9_BASE"
+#    else
+#        STAGE1="$STAGE1_BASE"
+#        STAGE2="$STAGE2_BASE"
+#        STAGE3="$STAGE3_BASE"
+#        STAGE4="$STAGE4_BASE"
+#        STAGE5="$STAGE5_BASE"
+#        STAGE6="$STAGE6_BASE"
+#        STAGE7="$STAGE7_BASE"
+#        STAGE8="$STAGE8_BASE"
+#        STAGE9="$STAGE9_BASE"
+#    fi
+##old code##
+    STAGE1="$STAGE1_BASE"
+    STAGE2="$STAGE2_BASE"
+    STAGE3="$STAGE3_BASE"
+    STAGE4="$STAGE4_BASE"
+    STAGE5="$STAGE5_BASE"
+    STAGE6="$STAGE6_BASE"
+    STAGE7="$STAGE7_BASE"
+    STAGE8="$STAGE8_BASE"
+    STAGE9="$STAGE9_BASE"
 }
 
 normalize_bamfile_to_absolute() {
@@ -1993,14 +2005,18 @@ run_stage3_pca() {
         echo ">>> 跳過 PCA 分析，嘗試載入先前的過濾結果..."
         if [ -f "$STAGE3/${PROJECT_NAME}_after_pca.bamfile" ]; then
             echo "[!] 載入既有的 PCA 過濾後清單: $(wc -l < "$STAGE3/${PROJECT_NAME}_after_pca.bamfile") 個樣本"
-            if [[ "$CHAIN_STAGES" == true ]]; then
-                BAM_LIST="$STAGE3/${PROJECT_NAME}_after_pca.bamfile"
-            fi
+##old code##
+#            if [[ "$CHAIN_STAGES" == true ]]; then
+#                BAM_LIST="$STAGE3/${PROJECT_NAME}_after_pca.bamfile"
+#            fi
+##old code##
         else
             echo "[!] 未發現過濾後清單，假設上次選擇保留所有樣本 (或無 Outlier)。"
-            if [[ "$CHAIN_STAGES" == true ]]; then
-                BAM_LIST="$bam_list_local"
-            fi
+##old code##
+#            if [[ "$CHAIN_STAGES" == true ]]; then
+#                BAM_LIST="$bam_list_local"
+#            fi
+##old code##
         fi
         return
     fi
@@ -2205,22 +2221,36 @@ R_CODE
 
 run_stage4_clone() {
     local clone_bam_list
-    if [[ "$CHAIN_STAGES" == true ]]; then
-        [ -z "$BAM_LIST" ] && BAM_LIST="$STAGE2/${PROJECT_NAME}_bwa_mapped.bamfile"
+##old code##
+#    if [[ "$CHAIN_STAGES" == true ]]; then
+#        [ -z "$BAM_LIST" ] && BAM_LIST="$STAGE2/${PROJECT_NAME}_bwa_mapped.bamfile"
+#        clone_bam_list="$BAM_LIST"
+#    else
+#        if [ -n "$BAM_LIST_CLONE_INPUT" ]; then
+#            clone_bam_list="$BAM_LIST_CLONE_INPUT"
+#        elif [ -n "$BAM_LIST" ] && [ -s "$BAM_LIST" ]; then
+#            clone_bam_list="$BAM_LIST"
+#        elif [ -s "$STAGE3/${PROJECT_NAME}_after_pca.bamfile" ]; then
+#            clone_bam_list="$STAGE3/${PROJECT_NAME}_after_pca.bamfile"
+#        elif [ -s "$STAGE2/${PROJECT_NAME}_bwa_mapped.bamfile" ]; then
+#            clone_bam_list="$STAGE2/${PROJECT_NAME}_bwa_mapped.bamfile"
+#        else
+#            echo "錯誤：Stage4 需要 BAM list，但尚未提供且前序 Stage2/3 未產生。"
+#            exit 1
+#        fi
+#    fi
+##old code##
+    if [ -n "$BAM_LIST_CLONE_INPUT" ]; then
+        clone_bam_list="$BAM_LIST_CLONE_INPUT"
+    elif [ -n "$BAM_LIST" ] && [ -s "$BAM_LIST" ]; then
         clone_bam_list="$BAM_LIST"
+    elif [ -s "$STAGE3/${PROJECT_NAME}_after_pca.bamfile" ]; then
+        clone_bam_list="$STAGE3/${PROJECT_NAME}_after_pca.bamfile"
+    elif [ -s "$STAGE2/${PROJECT_NAME}_bwa_mapped.bamfile" ]; then
+        clone_bam_list="$STAGE2/${PROJECT_NAME}_bwa_mapped.bamfile"
     else
-        if [ -n "$BAM_LIST_CLONE_INPUT" ]; then
-            clone_bam_list="$BAM_LIST_CLONE_INPUT"
-        elif [ -n "$BAM_LIST" ] && [ -s "$BAM_LIST" ]; then
-            clone_bam_list="$BAM_LIST"
-        elif [ -s "$STAGE3/${PROJECT_NAME}_after_pca.bamfile" ]; then
-            clone_bam_list="$STAGE3/${PROJECT_NAME}_after_pca.bamfile"
-        elif [ -s "$STAGE2/${PROJECT_NAME}_bwa_mapped.bamfile" ]; then
-            clone_bam_list="$STAGE2/${PROJECT_NAME}_bwa_mapped.bamfile"
-        else
-            echo "錯誤：Stage4 需要 BAM list，但尚未提供且前序 Stage2/3 未產生。"
-            exit 1
-        fi
+        echo "錯誤：Stage4 需要 BAM list，但尚未提供且前序 Stage2/3 未產生。"
+        exit 1
     fi
 
     echo "[Stage 4] 執行 Clone 偵測分析 (ANGSD IBS)..."
@@ -2230,7 +2260,9 @@ run_stage4_clone() {
         echo ">>> 跳過 Clone 計算，嘗試載入先前去重結果..."
         if [ -f "$STAGE4/${PROJECT_NAME}_after_clones.bamfile" ]; then
             echo "[!] 載入既有的 Clone 去重後清單: $(wc -l < "$STAGE4/${PROJECT_NAME}_after_clones.bamfile") 個樣本"
-            [[ "$CHAIN_STAGES" == true ]] && BAM_LIST="$STAGE4/${PROJECT_NAME}_after_clones.bamfile"
+##old code##
+#            [[ "$CHAIN_STAGES" == true ]] && BAM_LIST="$STAGE4/${PROJECT_NAME}_after_clones.bamfile"
+##old code##
         else
             echo "[!] 未發現過濾後清單，假設上次選擇保留 Clone 或無 Clone。"
         fi
@@ -2373,32 +2405,47 @@ R_CODE
 }
 
 resolve_bam_list_for_stage5_to_7() {
-    if [[ "$CHAIN_STAGES" == true ]]; then
-        LIST_FINAL="$STAGE4/${PROJECT_NAME}_after_clones.bamfile"
-        LIST_PCA_ONLY="$STAGE3/${PROJECT_NAME}_after_pca.bamfile"
-        LIST_FULL="$STAGE2/${PROJECT_NAME}_bwa_mapped.bamfile"
-
-        if [ -f "$LIST_FINAL" ]; then
-            BAM_LIST="$LIST_FINAL"
-        elif [ -f "$LIST_PCA_ONLY" ]; then
-            BAM_LIST="$LIST_PCA_ONLY"
-        else
-            BAM_LIST="$LIST_FULL"
-        fi
-    else
-        if [ -n "$BAM_LIST" ] && [ -s "$BAM_LIST" ]; then
-            :
-        elif [ -s "$STAGE4/${PROJECT_NAME}_after_clones.bamfile" ]; then
-            BAM_LIST="$STAGE4/${PROJECT_NAME}_after_clones.bamfile"
-        elif [ -s "$STAGE3/${PROJECT_NAME}_after_pca.bamfile" ]; then
-            BAM_LIST="$STAGE3/${PROJECT_NAME}_after_pca.bamfile"
-        elif [ -s "$STAGE2/${PROJECT_NAME}_bwa_mapped.bamfile" ]; then
-            BAM_LIST="$STAGE2/${PROJECT_NAME}_bwa_mapped.bamfile"
-        elif [[ "$RUN_S5" == "y" ]]; then
-            BAM_LIST="$BAM_LIST_LD_INPUT"
-        elif [[ "$RUN_S6" == "y" || "$RUN_S7" == "y" ]]; then
-            BAM_LIST="$BAM_LIST_FINAL_INPUT"
-        fi
+##old code##
+#    if [[ "$CHAIN_STAGES" == true ]]; then
+#        LIST_FINAL="$STAGE4/${PROJECT_NAME}_after_clones.bamfile"
+#        LIST_PCA_ONLY="$STAGE3/${PROJECT_NAME}_after_pca.bamfile"
+#        LIST_FULL="$STAGE2/${PROJECT_NAME}_bwa_mapped.bamfile"
+#
+#        if [ -f "$LIST_FINAL" ]; then
+#            BAM_LIST="$LIST_FINAL"
+#        elif [ -f "$LIST_PCA_ONLY" ]; then
+#            BAM_LIST="$LIST_PCA_ONLY"
+#        else
+#            BAM_LIST="$LIST_FULL"
+#        fi
+#    else
+#        if [ -n "$BAM_LIST" ] && [ -s "$BAM_LIST" ]; then
+#            :
+#        elif [ -s "$STAGE4/${PROJECT_NAME}_after_clones.bamfile" ]; then
+#            BAM_LIST="$STAGE4/${PROJECT_NAME}_after_clones.bamfile"
+#        elif [ -s "$STAGE3/${PROJECT_NAME}_after_pca.bamfile" ]; then
+#            BAM_LIST="$STAGE3/${PROJECT_NAME}_after_pca.bamfile"
+#        elif [ -s "$STAGE2/${PROJECT_NAME}_bwa_mapped.bamfile" ]; then
+#            BAM_LIST="$STAGE2/${PROJECT_NAME}_bwa_mapped.bamfile"
+#        elif [[ "$RUN_S5" == "y" ]]; then
+#            BAM_LIST="$BAM_LIST_LD_INPUT"
+#        elif [[ "$RUN_S6" == "y" || "$RUN_S7" == "y" ]]; then
+#            BAM_LIST="$BAM_LIST_FINAL_INPUT"
+#        fi
+#    fi
+##old code##
+    if [ -n "$BAM_LIST" ] && [ -s "$BAM_LIST" ]; then
+        :
+    elif [ -s "$STAGE4/${PROJECT_NAME}_after_clones.bamfile" ]; then
+        BAM_LIST="$STAGE4/${PROJECT_NAME}_after_clones.bamfile"
+    elif [ -s "$STAGE3/${PROJECT_NAME}_after_pca.bamfile" ]; then
+        BAM_LIST="$STAGE3/${PROJECT_NAME}_after_pca.bamfile"
+    elif [ -s "$STAGE2/${PROJECT_NAME}_bwa_mapped.bamfile" ]; then
+        BAM_LIST="$STAGE2/${PROJECT_NAME}_bwa_mapped.bamfile"
+    elif [[ "$RUN_S5" == "y" ]]; then
+        BAM_LIST="$BAM_LIST_LD_INPUT"
+    elif [[ "$RUN_S6" == "y" || "$RUN_S7" == "y" ]]; then
+        BAM_LIST="$BAM_LIST_FINAL_INPUT"
     fi
 
     if [ ! -s "$BAM_LIST" ]; then
