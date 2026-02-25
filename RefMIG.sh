@@ -27,9 +27,15 @@ source "$CONF_FILE"
 ENV_CHECK_FILE=".pipeline_env_ready"
 PROJECT_CONTEXT_FILE="PROJECT_CONTEXT.txt"
 LEGACY_PROJECT_NAME_FILE=".project_name"
+APP_VERSION="v3.0.1"
+APP_UPDATED_AT="2026-02-25"
 SELF_UPDATE_BRANCH="beta"
 SELF_UPDATE_REPO_RAW="https://raw.githubusercontent.com/SavannaChow/migseq-snpcalling/${SELF_UPDATE_BRANCH}/RefMIG.sh"
 SELF_UPDATE_TIMEOUT=15
+UPDATE_STATUS="未檢查"
+UPDATE_REMOTE_VERSION="unknown"
+UPDATE_LOCAL_SHA=""
+UPDATE_REMOTE_SHA=""
 
 check_dependencies() {
     if [ -f "$ENV_CHECK_FILE" ]; then
@@ -125,11 +131,58 @@ sha256_file() {
     fi
 }
 
+self_update_probe() {
+    local script_path tmp_remote remote_version
+
+    UPDATE_STATUS="未檢查"
+    UPDATE_REMOTE_VERSION="unknown"
+    UPDATE_LOCAL_SHA=""
+    UPDATE_REMOTE_SHA=""
+
+    [ "${REFMIG_SKIP_UPDATE_CHECK:-0}" = "1" ] && {
+        UPDATE_STATUS="已停用檢查"
+        return 0
+    }
+
+    script_path=$(realpath "${BASH_SOURCE[0]}" 2>/dev/null || true)
+    [ -z "$script_path" ] && {
+        UPDATE_STATUS="無法判斷目前腳本路徑"
+        return 1
+    }
+    [ ! -f "$script_path" ] && {
+        UPDATE_STATUS="目前腳本不存在"
+        return 1
+    }
+
+    tmp_remote=$(mktemp)
+    if ! download_url_to_file "$SELF_UPDATE_REPO_RAW" "$tmp_remote"; then
+        rm -f "$tmp_remote"
+        UPDATE_STATUS="檢查失敗（無法連線）"
+        return 1
+    fi
+
+    UPDATE_LOCAL_SHA=$(sha256_file "$script_path")
+    UPDATE_REMOTE_SHA=$(sha256_file "$tmp_remote")
+    remote_version=$(awk -F'"' '/^APP_VERSION=/{print $2; exit}' "$tmp_remote")
+    [ -n "$remote_version" ] && UPDATE_REMOTE_VERSION="$remote_version"
+
+    if [ -n "$UPDATE_LOCAL_SHA" ] && [ "$UPDATE_LOCAL_SHA" = "$UPDATE_REMOTE_SHA" ]; then
+        UPDATE_STATUS="否（已是最新）"
+    else
+        UPDATE_STATUS="是（可更新到 ${UPDATE_REMOTE_VERSION}）"
+    fi
+    rm -f "$tmp_remote"
+    return 0
+}
+
 self_update_check_and_apply() {
     local script_path tmp_remote local_sha remote_sha backup_path resp
     local install_cmd
 
-    [ "${REFMIG_SKIP_UPDATE_CHECK:-0}" = "1" ] && return 0
+    [ "${REFMIG_SKIP_UPDATE_CHECK:-0}" = "1" ] && {
+        UPDATE_STATUS="已停用檢查"
+        return 0
+    }
     script_path=$(realpath "${BASH_SOURCE[0]}" 2>/dev/null || true)
     [ -z "$script_path" ] && return 0
     [ ! -f "$script_path" ] && return 0
@@ -137,18 +190,26 @@ self_update_check_and_apply() {
     tmp_remote=$(mktemp)
     if ! download_url_to_file "$SELF_UPDATE_REPO_RAW" "$tmp_remote"; then
         rm -f "$tmp_remote"
+        UPDATE_STATUS="檢查失敗（無法連線）"
         echo "[更新檢查] 無法連線或下載遠端版本，略過更新檢查。"
         return 0
     fi
 
     local_sha=$(sha256_file "$script_path")
     remote_sha=$(sha256_file "$tmp_remote")
+    UPDATE_LOCAL_SHA="$local_sha"
+    UPDATE_REMOTE_SHA="$remote_sha"
+    local tmp_remote_version
+    tmp_remote_version=$(awk -F'"' '/^APP_VERSION=/{print $2; exit}' "$tmp_remote")
+    [ -n "$tmp_remote_version" ] && UPDATE_REMOTE_VERSION="$tmp_remote_version"
 
     if [ -n "$local_sha" ] && [ "$local_sha" = "$remote_sha" ]; then
+        UPDATE_STATUS="否（已是最新）"
         rm -f "$tmp_remote"
         return 0
     fi
 
+    UPDATE_STATUS="是（可更新到 ${UPDATE_REMOTE_VERSION}）"
     echo "======================================================="
     echo "[發現新版本] RefMIG.sh 有可用更新"
     echo "GitHub: https://github.com/SavannaChow/migseq-snpcalling/tree/${SELF_UPDATE_BRANCH}"
@@ -159,6 +220,7 @@ self_update_check_and_apply() {
     if [[ "$resp" != "y" && "$resp" != "Y" ]]; then
         rm -f "$tmp_remote"
         echo "已略過更新，繼續使用目前版本。"
+        UPDATE_STATUS="是（使用者略過更新）"
         return 0
     fi
 
@@ -180,6 +242,17 @@ self_update_check_and_apply() {
     echo "（完成後可重新執行本腳本）"
     rm -f "$tmp_remote"
     return 0
+}
+
+print_version_info() {
+    echo "-------------------------------------------------------"
+    echo "  版本號碼      : $APP_VERSION"
+    echo "  更新日期      : $APP_UPDATED_AT"
+    echo "  目前版本      : $APP_VERSION"
+    echo "  是否有新版本  : $UPDATE_STATUS"
+    echo "  更新來源分支  : $SELF_UPDATE_BRANCH"
+    [ "$UPDATE_REMOTE_VERSION" != "unknown" ] && echo "  遠端版本      : $UPDATE_REMOTE_VERSION"
+    echo "-------------------------------------------------------"
 }
 
 # ------------------------------------------------------------------------------
@@ -1376,6 +1449,10 @@ start_logging() {
     GLOBAL_CMD_FILE="$LOG_DIR/${PROJECT_NAME}_${current_time}_commands.sh"
 
     echo "$HEADER_TEXT" > "$LOG_FILE"
+    echo "版本號碼: $APP_VERSION" >> "$LOG_FILE"
+    echo "更新日期: $APP_UPDATED_AT" >> "$LOG_FILE"
+    echo "更新狀態: $UPDATE_STATUS" >> "$LOG_FILE"
+    [ "$UPDATE_REMOTE_VERSION" != "unknown" ] && echo "遠端版本: $UPDATE_REMOTE_VERSION" >> "$LOG_FILE"
     echo "專案名稱: $PROJECT_NAME" >> "$LOG_FILE"
     echo "啟動時間: $(date)" >> "$LOG_FILE"
     echo "-------------------------------------------------------" >> "$LOG_FILE"
@@ -1427,6 +1504,7 @@ print_command_preview() {
 select_analysis_scope() {
     clear
     echo "$HEADER_TEXT"
+    print_version_info
     echo ""
     echo "======================================================="
     echo "  請先選擇要做哪種分析"
