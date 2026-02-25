@@ -377,6 +377,7 @@ is_tracked_external_command() {
 
 debug_command_capture() {
     local cmd first trimmed
+    local stage8_echo_trace_suppressed=false
     [ "$CMD_CAPTURE_GUARD" -eq 1 ] && return 0
     cmd="$BASH_COMMAND"
     [ -z "$cmd" ] && return 0
@@ -397,6 +398,11 @@ debug_command_capture() {
     first="${first#command}"
     first=$(echo "$first" | sed 's/^[[:space:]]*//')
 
+    # Stage8 期間不記錄 echo 的 TRACE，避免 runstructure 生成段落過度雜訊
+    if [ -n "$CURRENT_STAGE_CMD_FILE" ] && [[ "$CURRENT_STAGE_CMD_FILE" == *"Stage8_Structure"* ]] && [ "$first" = "echo" ]; then
+        stage8_echo_trace_suppressed=true
+    fi
+
     CMD_CAPTURE_GUARD=1
     if is_tracked_external_command "$first"; then
         echo "[CMD] $trimmed"
@@ -406,7 +412,7 @@ debug_command_capture() {
         if [ -n "$CURRENT_STAGE_CMD_FILE" ]; then
             printf "%s\n" "$trimmed" >> "$CURRENT_STAGE_CMD_FILE"
         fi
-    elif [ "$TRACE_ALL_TO_MAIN_LOG" = true ]; then
+    elif [ "$TRACE_ALL_TO_MAIN_LOG" = true ] && [ "$stage8_echo_trace_suppressed" = false ]; then
         echo "[TRACE] $trimmed"
     fi
     CMD_CAPTURE_GUARD=0
