@@ -27,6 +27,8 @@ source "$CONF_FILE"
 ENV_CHECK_FILE=".pipeline_env_ready"
 PROJECT_CONTEXT_FILE="PROJECT_CONTEXT.txt"
 LEGACY_PROJECT_NAME_FILE=".project_name"
+SELF_UPDATE_REPO_RAW="https://raw.githubusercontent.com/SavannaChow/migseq-snpcalling/main/RefMIG.sh"
+SELF_UPDATE_TIMEOUT=15
 
 check_dependencies() {
     if [ -f "$ENV_CHECK_FILE" ]; then
@@ -84,6 +86,99 @@ check_dependencies() {
         echo "錯誤：請先解決上述手動安裝套件後再運行。"
         exit 1
     fi
+}
+
+fetch_url_to_stdout() {
+    local url="$1"
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsSL --max-time "$SELF_UPDATE_TIMEOUT" "$url"
+        return $?
+    elif command -v wget >/dev/null 2>&1; then
+        wget -qO- --timeout="$SELF_UPDATE_TIMEOUT" "$url"
+        return $?
+    fi
+    return 127
+}
+
+download_url_to_file() {
+    local url="$1"
+    local outfile="$2"
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsSL --max-time "$SELF_UPDATE_TIMEOUT" "$url" -o "$outfile"
+        return $?
+    elif command -v wget >/dev/null 2>&1; then
+        wget -q --timeout="$SELF_UPDATE_TIMEOUT" -O "$outfile" "$url"
+        return $?
+    fi
+    return 127
+}
+
+sha256_file() {
+    local file="$1"
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$file" | awk '{print $1}'
+    elif command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 "$file" | awk '{print $1}'
+    else
+        wc -c < "$file" | awk '{print "size:"$1}'
+    fi
+}
+
+self_update_check_and_apply() {
+    local script_path tmp_remote local_sha remote_sha backup_path resp
+    local install_cmd
+
+    [ "${REFMIG_SKIP_UPDATE_CHECK:-0}" = "1" ] && return 0
+    script_path=$(realpath "${BASH_SOURCE[0]}" 2>/dev/null || true)
+    [ -z "$script_path" ] && return 0
+    [ ! -f "$script_path" ] && return 0
+
+    tmp_remote=$(mktemp)
+    if ! download_url_to_file "$SELF_UPDATE_REPO_RAW" "$tmp_remote"; then
+        rm -f "$tmp_remote"
+        echo "[更新檢查] 無法連線或下載遠端版本，略過更新檢查。"
+        return 0
+    fi
+
+    local_sha=$(sha256_file "$script_path")
+    remote_sha=$(sha256_file "$tmp_remote")
+
+    if [ -n "$local_sha" ] && [ "$local_sha" = "$remote_sha" ]; then
+        rm -f "$tmp_remote"
+        return 0
+    fi
+
+    echo "======================================================="
+    echo "[發現新版本] RefMIG.sh 有可用更新"
+    echo "GitHub: https://github.com/SavannaChow/migseq-snpcalling"
+    echo "目前檔案: $script_path"
+    read -p "是否立即下載並覆蓋目前腳本？(y/n) [y]: " resp
+    resp=${resp:-y}
+
+    if [[ "$resp" != "y" && "$resp" != "Y" ]]; then
+        rm -f "$tmp_remote"
+        echo "已略過更新，繼續使用目前版本。"
+        return 0
+    fi
+
+    backup_path="${script_path}.bak.$(date +%Y%m%d_%H%M%S)"
+    cp "$script_path" "$backup_path" 2>/dev/null || true
+
+    if cp "$tmp_remote" "$script_path" 2>/dev/null && chmod +x "$script_path" 2>/dev/null; then
+        rm -f "$tmp_remote"
+        echo "更新完成：$script_path"
+        [ -f "$backup_path" ] && echo "備份檔案：$backup_path"
+        echo "請重新執行腳本以使用新版本。"
+        exit 0
+    fi
+
+    printf -v install_cmd 'sudo install -m 755 %q %q' "$tmp_remote" "$script_path"
+    echo "更新檔已下載但目前檔案無寫入權限。"
+    echo "請手動執行："
+    echo "$install_cmd"
+    echo "（完成後可重新執行本腳本）"
+    rm -f "$tmp_remote"
+    return 0
 }
 
 # ------------------------------------------------------------------------------
@@ -2312,32 +2407,52 @@ run_stage7_final_snp_with_mode() {
     local output_prefix="$3"
     local mode_label="$4"
     local vcf_sample_map_file
+    local sites_file_abs bam_list_abs ref_genome_abs output_dir_abs output_prefix_abs
+    local final_vcf final_str spid_file pgdspider_jar pgd_cmd
+    local final_vcf_abs final_str_abs spid_file_abs jar_cmd_path
+    local output_prefix_dirname output_prefix_basename
 
     if [ ! -f "$sites_file" ]; then
         echo "錯誤：$mode_label 需要位點表，但找不到：$sites_file"
         exit 1
     fi
-    if [ ! -f "${sites_file}.idx" ]; then
+    if [ ! -s "$BAM_LIST" ]; then
+        echo "錯誤：$mode_label 需要 BAM list，但找不到或為空：$BAM_LIST"
+        exit 1
+    fi
+    if [ ! -f "$REF_GENOME" ]; then
+        echo "錯誤：$mode_label 需要參考基因組，但找不到：$REF_GENOME"
+        exit 1
+    fi
+
+    sites_file_abs=$(realpath "$sites_file")
+    if [ ! -f "${sites_file_abs}.idx" ]; then
         echo "錯誤：未發現 sites index 檔案 (${sites_file}.idx)。"
         exit 1
     fi
 
-    echo "[Stage 7] 執行 $mode_label ..."
-    angsd -sites "$sites_file" -b "$BAM_LIST" -GL 1 -P 1 -minInd "$MIN_IND" -minMapQ 20 -minQ 25 -sb_pval 1e-5 -Hetbias_pval 1e-5 -skipTriallelic 1 -snp_pval 1e-5 -minMaf 0.05 -doMajorMinor 1 -doMaf 1 -doCounts 1 -doGlf 2 -dosnpstat 1 -doPost 1 -doGeno 8 -doBcf 1 --ignore-RG 0 -doHWE 1 -ref "$REF_GENOME" -out "$output_prefix"
+    output_prefix_dirname=$(dirname "$output_prefix")
+    output_prefix_basename=$(basename "$output_prefix")
+    output_dir_abs=$(realpath "$output_prefix_dirname")
+    output_prefix_abs="${output_dir_abs}/${output_prefix_basename}"
+    ref_genome_abs=$(realpath "$REF_GENOME")
+    bam_list_abs="${output_dir_abs}/.${PROJECT_NAME}_${target_mode}_abs.bamfile"
+    normalize_bamfile_to_absolute "$BAM_LIST" "$bam_list_abs"
 
-    bcftools view -O v -o "${output_prefix}.vcf" "${output_prefix}.bcf"
-    vcf_sample_map_file="${output_prefix}_vcf_sample_rename_map.tsv"
-    sanitize_vcf_sample_ids_inplace "${output_prefix}.vcf" "$vcf_sample_map_file"
-    FINAL_SNPS=$(bcftools view -H "${output_prefix}.vcf" | wc -l)
+    echo "[Stage 7] 執行 $mode_label ..."
+    angsd -sites "$sites_file_abs" -b "$bam_list_abs" -GL 1 -P 1 -minInd "$MIN_IND" -minMapQ 20 -minQ 25 -sb_pval 1e-5 -Hetbias_pval 1e-5 -skipTriallelic 1 -snp_pval 1e-5 -minMaf 0.05 -doMajorMinor 1 -doMaf 1 -doCounts 1 -doGlf 2 -dosnpstat 1 -doPost 1 -doGeno 8 -doBcf 1 --ignore-RG 0 -doHWE 1 -ref "$ref_genome_abs" -out "$output_prefix_abs"
+
+    bcftools view -O v -o "${output_prefix_abs}.vcf" "${output_prefix_abs}.bcf"
+    vcf_sample_map_file="${output_prefix_abs}_vcf_sample_rename_map.tsv"
+    sanitize_vcf_sample_ids_inplace "${output_prefix_abs}.vcf" "$vcf_sample_map_file"
+    FINAL_SNPS=$(bcftools view -H "${output_prefix_abs}.vcf" | wc -l)
 
     # --------------------------------------------------------------------------
     # VCF -> STRUCTURE(.str) 轉檔 (PGDSpider3-cli)
     # --------------------------------------------------------------------------
-    local final_vcf final_str spid_file pgdspider_jar pgd_cmd
-    local final_vcf_abs final_str_abs spid_file_abs jar_cmd_path
-    final_vcf="${output_prefix}.vcf"
-    final_str="${output_prefix}.str"
-    spid_file="$(dirname "$output_prefix")/VCF2STR.spid"
+    final_vcf="${output_prefix_abs}.vcf"
+    final_str="${output_prefix_abs}.str"
+    spid_file="${output_dir_abs}/VCF2STR.spid"
 
     cat << 'SPID_CODE' > "$spid_file"
 # spid-file generated: Wed Feb 18 21:28:41 CST 2026
@@ -2381,7 +2496,7 @@ STRUCTURE_WRITER_SNP_CODE_QUESTION=
 STRUCTURE_WRITER_FAST_FORMAT_QUESTION=false
 SPID_CODE
 
-    final_vcf_abs=$(realpath "$final_vcf")
+    final_vcf_abs="$final_vcf"
     final_str_abs="$(realpath "$(dirname "$final_str")")/$(basename "$final_str")"
     spid_file_abs=$(realpath "$spid_file")
 
@@ -2427,7 +2542,7 @@ SPID_CODE
 
         if [ $? -eq 0 ]; then
             normalize_structure_str_header "$final_str_abs"
-            echo "[完成] STRUCTURE 檔案已產出: $final_str"
+            echo "[完成] STRUCTURE 檔案已產出: $final_str_abs"
             echo "spid 設定檔: $spid_file"
         else
             echo "[警告] PGDSpider 轉檔失敗。"
@@ -2438,8 +2553,10 @@ SPID_CODE
     fi
 
     echo "[$mode_label] SNP 數量: $FINAL_SNPS"
-    echo "[$mode_label] VCF: $final_vcf"
-    echo "[$mode_label] STR: $final_str"
+    echo "[$mode_label] VCF: $final_vcf_abs"
+    echo "[$mode_label] STR: $final_str_abs"
+
+    rm -f "$bam_list_abs"
 }
 
 run_stage7_final_snp() {
@@ -3015,6 +3132,7 @@ EOF
 # 主程序
 # ------------------------------------------------------------------------------
 main() {
+    self_update_check_and_apply
     check_dependencies
     select_analysis_scope
     configure_project_name
