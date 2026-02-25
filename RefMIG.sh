@@ -31,7 +31,9 @@ APP_VERSION="v3.0.1"
 APP_UPDATED_AT="2026-02-25"
 SELF_UPDATE_BRANCH="beta"
 SELF_UPDATE_REPO_RAW="https://raw.githubusercontent.com/SavannaChow/migseq-snpcalling/${SELF_UPDATE_BRANCH}/RefMIG.sh"
-SELF_UPDATE_TIMEOUT=15
+SELF_UPDATE_TIMEOUT=5
+SELF_UPDATE_BYPASS_FILE=".update_check_bypass_until"
+SELF_UPDATE_BYPASS_SECONDS=21600
 UPDATE_STATUS="未檢查"
 UPDATE_REMOTE_VERSION="unknown"
 UPDATE_LOCAL_SHA=""
@@ -133,6 +135,29 @@ sha256_file() {
     fi
 }
 
+mark_update_check_bypass() {
+    local now until
+    now=$(date +%s 2>/dev/null || echo 0)
+    until=$((now + SELF_UPDATE_BYPASS_SECONDS))
+    printf "%s\n" "$until" > "$SELF_UPDATE_BYPASS_FILE"
+}
+
+is_update_check_bypassed() {
+    local now until
+    [ ! -f "$SELF_UPDATE_BYPASS_FILE" ] && return 1
+    until=$(head -n1 "$SELF_UPDATE_BYPASS_FILE" 2>/dev/null | tr -d '[:space:]')
+    if [[ ! "$until" =~ ^[0-9]+$ ]]; then
+        rm -f "$SELF_UPDATE_BYPASS_FILE"
+        return 1
+    fi
+    now=$(date +%s 2>/dev/null || echo 0)
+    if [ "$now" -lt "$until" ]; then
+        return 0
+    fi
+    rm -f "$SELF_UPDATE_BYPASS_FILE"
+    return 1
+}
+
 ##old code##
 # self_update_probe() {
 #     local script_path tmp_remote remote_version
@@ -187,6 +212,10 @@ self_update_check_and_apply() {
         UPDATE_STATUS="已停用檢查"
         return 0
     }
+    if is_update_check_bypassed; then
+        UPDATE_STATUS="已略過（離線暫停檢查）"
+        return 0
+    fi
     script_path=$(realpath "${BASH_SOURCE[0]}" 2>/dev/null || true)
     [ -z "$script_path" ] && return 0
     [ ! -f "$script_path" ] && return 0
@@ -194,10 +223,12 @@ self_update_check_and_apply() {
     tmp_remote=$(mktemp)
     if ! download_url_to_file "$SELF_UPDATE_REPO_RAW" "$tmp_remote"; then
         rm -f "$tmp_remote"
+        mark_update_check_bypass
         UPDATE_STATUS="檢查失敗（無法連線）"
-        echo "[更新檢查] 無法連線或下載遠端版本，略過更新檢查。"
+        echo "[更新檢查] 無法連線或下載遠端版本，已暫停更新檢查 ${SELF_UPDATE_BYPASS_SECONDS} 秒。"
         return 0
     fi
+    rm -f "$SELF_UPDATE_BYPASS_FILE"
 
     local_sha=$(sha256_file "$script_path")
     remote_sha=$(sha256_file "$tmp_remote")
