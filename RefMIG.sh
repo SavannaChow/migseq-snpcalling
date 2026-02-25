@@ -27,7 +27,7 @@ source "$CONF_FILE"
 ENV_CHECK_FILE=".pipeline_env_ready"
 PROJECT_CONTEXT_FILE="PROJECT_CONTEXT.txt"
 LEGACY_PROJECT_NAME_FILE=".project_name"
-SELF_UPDATE_BRANCH="${REFMIG_UPDATE_BRANCH:-beta}"
+SELF_UPDATE_BRANCH="beta"
 SELF_UPDATE_REPO_RAW="https://raw.githubusercontent.com/SavannaChow/migseq-snpcalling/${SELF_UPDATE_BRANCH}/RefMIG.sh"
 SELF_UPDATE_TIMEOUT=15
 
