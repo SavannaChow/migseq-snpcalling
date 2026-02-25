@@ -1309,6 +1309,25 @@ print_runtime_config() {
     echo ""
 }
 
+print_command_preview() {
+    echo ""
+    echo "  指令預覽（核心命令）:"
+    [[ "$RUN_S1" == "y" ]] && echo "    [S1] parallel ... fastp -i <R1> -I <R2> -o $STAGE1/trim/<sample>_R1_001.fastq.gz -O $STAGE1/trim/<sample>_R2_001.fastq.gz ..."
+    [[ "$RUN_S2" == "y" ]] && echo "    [S2] bwa mem -t $THREADS \"$REF_GENOME\" <R1.fastq.gz> <R2.fastq.gz> | samtools view/sort/index ; samtools flagstat > $STAGE2/mapping_results/<sample>.txt"
+    [[ "$RUN_S3" == "y" ]] && echo "    [S3] cp $STAGE2/${PROJECT_NAME}_mapping_summary.csv $STAGE3/${PROJECT_NAME}_mapping_summary.csv ; Rscript $STAGE3/${PROJECT_NAME}_PCA.r"
+    [[ "$RUN_S4" == "y" ]] && echo "    [S4] angsd -bam <clone_bamfile> ... -doIBS 1 -doGeno 32 ... -out $STAGE4/${PROJECT_NAME}_clone_identification ; Rscript $STAGE4/${PROJECT_NAME}_identify_clones.r"
+    [[ "$RUN_S5" == "y" ]] && echo "    [S5] angsd -b <bamfile> ... -SNP_pval 1e-6 ... -out $STAGE5/allsnps ; gunzip/cut -> $STAGE5/all_snp.sites ; angsd sites index"
+    [[ "$RUN_S6" == "y" ]] && echo "    [S6] cp $STAGE5/* $STAGE6/ ; ngsLD --geno $STAGE6/allsnps.geno --pos $STAGE6/all_snp.sites --max_kb_dist $S6_MAX_KB_DIST ... ; prune_graph ... ; angsd sites index $STAGE6/LD_pruned_snp.sites"
+    if [[ "$RUN_S7" == "y" && "$RUN_S7_WITH_LD" == "y" ]]; then
+        echo "    [S7-LD] angsd -sites $STAGE6/LD_pruned_snp.sites -b $STAGE4/${PROJECT_NAME}_after_clones.bamfile ... -minMaf 0.05 ... -out $STAGE7/LD_Pruned/${PROJECT_NAME}_snps_final_with_LD_Pruning ; bcftools view ; java -jar PGDSpider3-cli.jar ..."
+    fi
+    if [[ "$RUN_S7" == "y" && "$RUN_S7_SKIP_LD" == "y" ]]; then
+        echo "    [S7-Skip] angsd -sites $STAGE5/all_snp.sites -b <resolved bamfile> ... -minMaf 0.05 ... -out $STAGE7/Skip_LD_Pruning/${PROJECT_NAME}_snps_final_Skip_LD_Pruning ; bcftools view ; java -jar PGDSpider3-cli.jar ..."
+    fi
+    [[ "$RUN_S8" == "y" ]] && echo "    [S8] 產生 mainparams/extraparams/runstructure ; (可選) ./runstructure"
+    [[ "$RUN_S9" == "y" ]] && echo "    [S9] angsd(all populations) -> AllSites ; angsd(doSaf per pop) ; realSFS(sfs/fst index/stats) -> matrix"
+}
+
 select_analysis_scope() {
     clear
     echo "$HEADER_TEXT"
@@ -1654,6 +1673,7 @@ confirm_run() {
 
     printf "  %-15s : %s (Jobs: %s)\n" "執行緒" "$THREADS" "$JOBS"
     printf "  %-15s : %s\n" "日誌檔案" "$LOG_FILE"
+    print_command_preview
     echo ""
     echo "-------------------------------------------------------"
     read -p "  以上是否正確？ (y: 開始執行 / n: 結束): " CONFIRM
