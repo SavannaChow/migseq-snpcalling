@@ -27,7 +27,8 @@ source "$CONF_FILE"
 ENV_CHECK_FILE=".pipeline_env_ready"
 PROJECT_CONTEXT_FILE="PROJECT_CONTEXT.txt"
 LEGACY_PROJECT_NAME_FILE=".project_name"
-SELF_UPDATE_REPO_RAW="https://raw.githubusercontent.com/SavannaChow/migseq-snpcalling/main/RefMIG.sh"
+SELF_UPDATE_BRANCH="${REFMIG_UPDATE_BRANCH:-beta}"
+SELF_UPDATE_REPO_RAW="https://raw.githubusercontent.com/SavannaChow/migseq-snpcalling/${SELF_UPDATE_BRANCH}/RefMIG.sh"
 SELF_UPDATE_TIMEOUT=15
 
 check_dependencies() {
@@ -150,7 +151,7 @@ self_update_check_and_apply() {
 
     echo "======================================================="
     echo "[發現新版本] RefMIG.sh 有可用更新"
-    echo "GitHub: https://github.com/SavannaChow/migseq-snpcalling"
+    echo "GitHub: https://github.com/SavannaChow/migseq-snpcalling/tree/${SELF_UPDATE_BRANCH}"
     echo "目前檔案: $script_path"
     read -p "是否立即下載並覆蓋目前腳本？(y/n) [y]: " resp
     resp=${resp:-y}
