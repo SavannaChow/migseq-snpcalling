@@ -1162,24 +1162,32 @@ sanitize_vcf_sample_ids_inplace() {
 
 prepare_stage8_popinfo_str() {
     local input_str="$1"
-    local out_var="$2"
-    local str_dir popmap_file withpopinfo_str use_popinfo done_choice
+    local output_dir="$2"
+    local out_var="$3"
+    local popinfo_csv popmap_file label_file withpopinfo_str use_popinfo done_choice
+    local input_base
 
-    str_dir=$(dirname "$input_str")
-    popmap_file="$str_dir/popmap.txt"
-    withpopinfo_str="${input_str%.str}_withpopinfo.str"
+    input_base=$(basename "$input_str" .str)
+    popinfo_csv="$output_dir/popinfo.csv"
+    popmap_file="$output_dir/popmap.txt"
+    label_file="$output_dir/label.txt"
+    withpopinfo_str="$output_dir/${input_base}_popinfo.str"
 
-    awk 'NR>=2 && NF>=2 {print $1"\t"$2}' "$input_str" > "$popmap_file"
-    if [ ! -s "$popmap_file" ]; then
-        echo "[警告] 無法由 .str 產生 popmap.txt，將直接使用原始 .str。"
+    {
+        echo "sample_id,population,sample_name,population_name"
+        awk 'NR>=2 && NF>=2 {print $1 "," $2 "," $1 "," ""}' "$input_str"
+    } > "$popinfo_csv"
+
+    if [ ! -s "$popinfo_csv" ]; then
+        echo "[警告] 無法由 .str 產生 popinfo.csv，將直接使用原始 .str。"
         STAGE8_POPINFO_ENABLED="n"
         eval "$out_var=\"$input_str\""
         return 0
     fi
 
     echo "-------------------------------------------------------"
-    echo "[Stage 8] 已產生 population map: $popmap_file"
-    echo "欄位格式: sample_id<TAB>population"
+    echo "[Stage 8] 已產生: $popinfo_csv"
+    echo "欄位: sample_id,population,sample_name,population_name"
     read -p "STRUCTURE 是否要加入 popinfo? (y/n) [n]: " use_popinfo
     [ -z "$use_popinfo" ] && use_popinfo="n"
 
@@ -1189,11 +1197,11 @@ prepare_stage8_popinfo_str() {
         return 0
     fi
 
-    echo "請先編輯 $popmap_file 的 population 欄位，完成後回到此畫面。"
+    echo "請先編輯 $popinfo_csv 的欄位內容，完成後回到此畫面。"
     while true; do
         read -p "編輯完成後按 Enter 繼續 (r:重新顯示路徑 / q:取消使用popinfo): " done_choice
         if [[ "$done_choice" == "r" || "$done_choice" == "R" ]]; then
-            echo "popmap 檔案: $popmap_file"
+            echo "popinfo 檔案: $popinfo_csv"
             continue
         fi
         if [[ "$done_choice" == "q" || "$done_choice" == "Q" ]]; then
@@ -1202,31 +1210,58 @@ prepare_stage8_popinfo_str() {
             eval "$out_var=\"$input_str\""
             return 0
         fi
-        [ ! -s "$popmap_file" ] && { echo "錯誤：popmap.txt 為空或不存在，請重新編輯。"; continue; }
+        [ ! -s "$popinfo_csv" ] && { echo "錯誤：popinfo.csv 為空或不存在，請重新編輯。"; continue; }
         break
     done
 
+    # 由 popinfo.csv 的 col1&2（跳過 header）回寫 STR 第二欄 population，輸出 *_popinfo.str
     awk '
-        BEGIN { FS=OFS="\t" }
+        BEGIN { OFS="\t" }
         NR==FNR {
-            if (NF>=2) pop[$1]=$2
+            if (FNR==1) next
+            n=split($0, a, ",")
+            if (n>=2) {
+                row++
+                sid[row]=a[1]
+                pop[row]=a[2]
+            }
             next
         }
         FNR==1 { print; next }
         {
-            if ($1 in pop) $2=pop[$1]
+            row_idx++
+            if (row_idx in pop) $2=pop[row_idx]
             print
         }
-    ' "$popmap_file" "$input_str" > "$withpopinfo_str"
+    ' "$popinfo_csv" "$input_str" > "$withpopinfo_str"
 
     if [ ! -s "$withpopinfo_str" ]; then
-        echo "錯誤：產生 _withpopinfo.str 失敗，改用原始 .str。"
+        echo "錯誤：產生 _popinfo.str 失敗，改用原始 .str。"
         eval "$out_var=\"$input_str\""
         return 0
     fi
 
+    # 產生 popmap.txt (col1&2) 與 label.txt (col1&4)，僅取單數行（diploid 每樣本兩行）
+    awk -F',' '
+        FNR==1 { next }
+        {
+            r++
+            if (r % 2 == 1) printf "%s\t%s\n", $1, $2
+        }
+    ' "$popinfo_csv" > "$popmap_file"
+
+    awk -F',' '
+        FNR==1 { next }
+        {
+            r++
+            if (r % 2 == 1) printf "%s\t%s\n", $1, $4
+        }
+    ' "$popinfo_csv" > "$label_file"
+
     normalize_structure_str_header "$withpopinfo_str"
     echo "[完成] 已產生含 popinfo 的 STR: $withpopinfo_str"
+    echo "[完成] 已輸出: $popmap_file"
+    echo "[完成] 已輸出: $label_file"
     STAGE8_POPINFO_ENABLED="y"
     eval "$out_var=\"$withpopinfo_str\""
     return 0
@@ -3106,7 +3141,11 @@ run_stage8_structure_auto() {
 
     stage7_str_abs=$(realpath "$stage7_str_input")
     normalize_structure_str_header "$stage7_str_abs"
-    prepare_stage8_popinfo_str "$stage7_str_abs" stage8_prepared_str
+    run_label="STRUCTURE"
+    run_dir="$STAGE8/$run_label"
+    mkdir -p "$run_dir"
+
+    prepare_stage8_popinfo_str "$stage7_str_abs" "$run_dir" stage8_prepared_str
     stage7_str_abs="$stage8_prepared_str"
     stage7_str_base=$(basename "$stage7_str_abs" .str)
     S7_STR_FILE="$stage7_str_abs"
@@ -3164,9 +3203,6 @@ run_stage8_structure_auto() {
     fi
 
     show_stage7_params
-    run_label="STRUCTURE"
-    run_dir="$STAGE8/$run_label"
-    mkdir -p "$run_dir"
 
     if [ ! -f "$S7_STR_FILE" ]; then
         echo "錯誤：Stage7 .str 檔案不存在：$S7_STR_FILE"
