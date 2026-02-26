@@ -345,6 +345,7 @@ BAM_LIST_DIV_ALL_INPUT=""
 STAGE9_SKIP_LD_VCF_INPUT=""
 STAGE9_LAST_RUN_DIR=""
 S9_RUN_STATS2="n"
+STAGE8_POPINFO_ENABLED="n"
 S6_MAX_KB_DIST="50"
 CURRENT_STAGE_DIR=""
 CURRENT_STAGE_CMD_FILE=""
@@ -1156,6 +1157,78 @@ sanitize_vcf_sample_ids_inplace() {
     ' "$vcf_file" > "$tmp_file"
 
     mv "$tmp_file" "$vcf_file"
+    return 0
+}
+
+prepare_stage8_popinfo_str() {
+    local input_str="$1"
+    local out_var="$2"
+    local str_dir popmap_file withpopinfo_str use_popinfo done_choice
+
+    str_dir=$(dirname "$input_str")
+    popmap_file="$str_dir/popmap.txt"
+    withpopinfo_str="${input_str%.str}_withpopinfo.str"
+
+    awk 'NR>=2 && NF>=2 {print $1"\t"$2}' "$input_str" > "$popmap_file"
+    if [ ! -s "$popmap_file" ]; then
+        echo "[警告] 無法由 .str 產生 popmap.txt，將直接使用原始 .str。"
+        STAGE8_POPINFO_ENABLED="n"
+        eval "$out_var=\"$input_str\""
+        return 0
+    fi
+
+    echo "-------------------------------------------------------"
+    echo "[Stage 8] 已產生 population map: $popmap_file"
+    echo "欄位格式: sample_id<TAB>population"
+    read -p "STRUCTURE 是否要加入 popinfo? (y/n) [n]: " use_popinfo
+    [ -z "$use_popinfo" ] && use_popinfo="n"
+
+    if [[ "$use_popinfo" != "y" && "$use_popinfo" != "Y" ]]; then
+        STAGE8_POPINFO_ENABLED="n"
+        eval "$out_var=\"$input_str\""
+        return 0
+    fi
+
+    echo "請先編輯 $popmap_file 的 population 欄位，完成後回到此畫面。"
+    while true; do
+        read -p "編輯完成後按 Enter 繼續 (r:重新顯示路徑 / q:取消使用popinfo): " done_choice
+        if [[ "$done_choice" == "r" || "$done_choice" == "R" ]]; then
+            echo "popmap 檔案: $popmap_file"
+            continue
+        fi
+        if [[ "$done_choice" == "q" || "$done_choice" == "Q" ]]; then
+            echo "已取消使用 popinfo，改用原始 .str。"
+            STAGE8_POPINFO_ENABLED="n"
+            eval "$out_var=\"$input_str\""
+            return 0
+        fi
+        [ ! -s "$popmap_file" ] && { echo "錯誤：popmap.txt 為空或不存在，請重新編輯。"; continue; }
+        break
+    done
+
+    awk '
+        BEGIN { FS=OFS="\t" }
+        NR==FNR {
+            if (NF>=2) pop[$1]=$2
+            next
+        }
+        FNR==1 { print; next }
+        {
+            if ($1 in pop) $2=pop[$1]
+            print
+        }
+    ' "$popmap_file" "$input_str" > "$withpopinfo_str"
+
+    if [ ! -s "$withpopinfo_str" ]; then
+        echo "錯誤：產生 _withpopinfo.str 失敗，改用原始 .str。"
+        eval "$out_var=\"$input_str\""
+        return 0
+    fi
+
+    normalize_structure_str_header "$withpopinfo_str"
+    echo "[完成] 已產生含 popinfo 的 STR: $withpopinfo_str"
+    STAGE8_POPINFO_ENABLED="y"
+    eval "$out_var=\"$withpopinfo_str\""
     return 0
 }
 
@@ -3006,6 +3079,7 @@ run_stage9_genetic_divergence() {
 
 run_stage8_structure_auto() {
     local stage7_str_input stage7_str_abs stage7_str_base
+    local stage8_prepared_str
     local stage7_numind_default stage7_numloci_default
     local latest_params reuse_prev edit_mode
     local run_label run_dir
@@ -3032,6 +3106,8 @@ run_stage8_structure_auto() {
 
     stage7_str_abs=$(realpath "$stage7_str_input")
     normalize_structure_str_header "$stage7_str_abs"
+    prepare_stage8_popinfo_str "$stage7_str_abs" stage8_prepared_str
+    stage7_str_abs="$stage8_prepared_str"
     stage7_str_base=$(basename "$stage7_str_abs" .str)
     S7_STR_FILE="$stage7_str_abs"
 
@@ -3044,6 +3120,9 @@ run_stage8_structure_auto() {
     fi
 
     set_stage7_default_values "$stage7_str_base" "$stage7_numind_default" "$stage7_numloci_default"
+    if [[ "$S7_STR_FILE" == *_withpopinfo.str ]]; then
+        S7_POPDATA=True
+    fi
     print_stage7_parameter_notes
 
     latest_params=$(find "$STAGE8" -maxdepth 2 -type f -name "stage7_params.env" | sort | tail -n1)
@@ -3072,6 +3151,11 @@ run_stage8_structure_auto() {
     if [ ! -f "$S7_STR_FILE" ]; then
         echo "[警告] 參數中的 .str 檔案不存在，恢復使用當前 Stage7 輸入檔案。"
         S7_STR_FILE="$stage7_str_abs"
+    fi
+    if [[ "$STAGE8_POPINFO_ENABLED" == "y" ]]; then
+        S7_POPDATA=True
+    else
+        S7_POPDATA=False
     fi
     S7_DATASET=$(basename "$S7_STR_FILE" .str)
     if infer_stage7_str_metrics "$S7_STR_FILE" stage7_numind_default stage7_numloci_default; then
