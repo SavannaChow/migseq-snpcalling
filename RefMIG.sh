@@ -643,6 +643,69 @@ normalize_bamfile_to_absolute() {
     done < "$input_bamfile"
 }
 
+collect_stage9_population_bamfiles() {
+    local stage9_dir="$1"
+    local stage9_pop_dir="$stage9_dir/population_bamfiles"
+    local choice input_path target_name target_path
+    local pop_files=()
+    local f
+
+    mkdir -p "$stage9_pop_dir"
+
+    echo "-------------------------------------------------------"
+    echo "[Stage 9] 請準備每個族群的 population.bamfile"
+    echo "放入資料夾：$stage9_pop_dir"
+    echo "檔名建議：pop1.bamfile, pop2.bamfile ..."
+    echo "-------------------------------------------------------"
+
+    while true; do
+        pop_files=()
+        while IFS= read -r f; do
+            pop_files+=("$f")
+        done < <(find "$stage9_pop_dir" -maxdepth 1 -type f -name "*.bamfile" ! -name "all_populations.bamfile" | sort)
+
+        echo "目前偵測到 ${#pop_files[@]} 個 population.bamfile："
+        for i in "${!pop_files[@]}"; do
+            printf "%2d) %s\n" "$((i+1))" "$(basename "${pop_files[$i]}")"
+        done
+        echo "r) 重新掃描"
+        echo "m) 從其他位置匯入 bamfile"
+        echo "c) 準備完成，繼續"
+        echo "q) 取消 Stage9"
+        read -p "請選擇: " choice
+
+        case "$choice" in
+            r|R) ;;
+            m|M)
+                read -e -p "請輸入要匯入的 bamfile 路徑: " input_path
+                if [ ! -s "$input_path" ]; then
+                    echo "錯誤：找不到或空檔 $input_path"
+                    continue
+                fi
+                input_path=$(realpath "$input_path")
+                target_name=$(basename "$input_path")
+                target_path="$stage9_pop_dir/$target_name"
+                cp "$input_path" "$target_path"
+                echo "已匯入：$target_path"
+                ;;
+            c|C)
+                if [ "${#pop_files[@]}" -lt 2 ]; then
+                    echo "錯誤：至少需要 2 個 population.bamfile 才能計算族群間 divergence。"
+                    continue
+                fi
+                return 0
+                ;;
+            q|Q)
+                echo "使用者取消 Stage9。"
+                exit 0
+                ;;
+            *)
+                echo "錯誤：無效選擇。"
+                ;;
+        esac
+    done
+}
+
 check_structure_harvester_ready() {
     local sh_path sh_dir
     sh_path=$(command -v structureHarvester.py 2>/dev/null || true)
@@ -2192,7 +2255,7 @@ collect_inputs() {
     if [[ "$RUN_S9" == "y" ]]; then
         echo "-------------------------------------------------------"
         echo "[Stage 9 提醒]"
-        echo "1) 你需要定義要比較的族群 做 divergence 比較。"
+        echo "1) 你需要定義"要互相比較的族群"做Fst(這邊使用2DSFS)。"
         echo "2) 每個族群都要有一個屬於他自己的bamfile"
         echo "3) 例如pop1.bamfile, pop2.bamfile, pop3.bamfile"
         echo ""
@@ -2204,6 +2267,7 @@ collect_inputs() {
         if [[ "$RUN_S4" != "y" && "$RUN_S3" != "y" ]]; then
             select_stage34_bamfile_input "請選擇 Stage9 要使用的『所有族群』BAM list (.bamfile)" BAM_LIST_DIV_ALL_INPUT
         fi
+        collect_stage9_population_bamfiles "$STAGE9/divergence"
     fi
 }
 
@@ -3132,7 +3196,6 @@ run_stage9_genetic_divergence() {
     local stage9_fst_dir stage9_stats2_dir stage9_matrix_dir
     local stage9_all_n stage9_all_minind
     local pop_files=() pop_norm_files=() pop_names=()
-    local choice input_path target_name target_path
     local f n_pop minind_pop pop_name pop_norm
     local i j p1 p2 pair_tag pair_sfs fst_prefix fst_idx
     local fst_stats_file fst_stats2_file fst_summary_file
@@ -3175,59 +3238,21 @@ run_stage9_genetic_divergence() {
     normalize_bamfile_to_absolute "$BAM_LIST_DIV_ALL_INPUT" "$stage9_all_bam_abs"
     stage9_all_bamfile="$stage9_all_bam_abs"
 
+    pop_files=()
+    while IFS= read -r f; do
+        pop_files+=("$f")
+    done < <(find "$stage9_pop_dir" -maxdepth 1 -type f -name "*.bamfile" ! -name "all_populations.bamfile" | sort)
+
     echo "-------------------------------------------------------"
     echo "[Stage 9] 分析資料夾已建立：$stage9_dir"
     [ -n "$STAGE9_SKIP_LD_VCF_INPUT" ] && echo "[Stage 9] 參考 Skip LD VCF: $STAGE9_SKIP_LD_VCF_INPUT"
-    echo "請準備每個族群的 population.bamfile 放入：$stage9_pop_dir"
-    echo "檔名建議：pop1.bamfile, pop2.bamfile ..."
+    echo "[Stage 9] 偵測到 ${#pop_files[@]} 個 population.bamfile"
     echo "-------------------------------------------------------"
 
-    while true; do
-        pop_files=()
-        while IFS= read -r f; do
-            pop_files+=("$f")
-        done < <(find "$stage9_pop_dir" -maxdepth 1 -type f -name "*.bamfile" ! -name "all_populations.bamfile" | sort)
-
-        echo "目前偵測到 ${#pop_files[@]} 個 population.bamfile："
-        for i in "${!pop_files[@]}"; do
-            printf "%2d) %s\n" "$((i+1))" "$(basename "${pop_files[$i]}")"
-        done
-        echo "r) 重新掃描"
-        echo "m) 從其他位置匯入 bamfile"
-        echo "c) 準備完成，繼續執行 Stage9"
-        echo "q) 取消 Stage9"
-        read -p "請選擇: " choice
-
-        case "$choice" in
-            r|R) ;;
-            m|M)
-                read -e -p "請輸入要匯入的 bamfile 路徑: " input_path
-                if [ ! -s "$input_path" ]; then
-                    echo "錯誤：找不到或空檔 $input_path"
-                    continue
-                fi
-                input_path=$(realpath "$input_path")
-                target_name=$(basename "$input_path")
-                target_path="$stage9_pop_dir/$target_name"
-                cp "$input_path" "$target_path"
-                echo "已匯入：$target_path"
-                ;;
-            c|C)
-                if [ "${#pop_files[@]}" -lt 2 ]; then
-                    echo "錯誤：至少需要 2 個 population.bamfile 才能計算族群間 divergence。"
-                    continue
-                fi
-                break
-                ;;
-            q|Q)
-                echo "使用者取消 Stage9。"
-                return 0
-                ;;
-            *)
-                echo "錯誤：無效選擇。"
-                ;;
-        esac
-    done
+    if [ "${#pop_files[@]}" -lt 2 ]; then
+        echo "錯誤：$stage9_pop_dir 中至少需要 2 個 population.bamfile。"
+        return 1
+    fi
 
     stage9_all_n=$(wc -l < "$stage9_all_bamfile")
     stage9_all_minind=$(( stage9_all_n * 8 / 10 ))
