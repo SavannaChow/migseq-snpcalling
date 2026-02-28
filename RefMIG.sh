@@ -1711,6 +1711,7 @@ select_analysis_scope() {
     echo "8) 只跑 Stage 8: Structure Auto Generator"
     echo "9) 只跑 Stage 9: Analysis of Genetic Divergence"
     echo "10) 自定義多階段 (不自動串接)"
+    echo "d) 下載並安裝參考基因組"
     echo "q) 離開"
     echo ""
     read -p "選擇分析範圍: " RUN_SCOPE
@@ -1743,6 +1744,8 @@ select_analysis_scope() {
 ##old code##
 #            CHAIN_STAGES=false
 ##old code##
+            ;;
+        d|D)
             ;;
         *)
             echo "錯誤：無效選項。"
@@ -1968,7 +1971,7 @@ download_and_install_ref_genome() {
 }
 
 select_ref_genome() {
-    local stored_ref DOWNLOAD_OPTION MANUAL_OPTION
+    local stored_ref MANUAL_OPTION
 
     # 若專案設定檔已有參考基因組且檔案存在，直接沿用，不重複詢問。
     if [ -z "$REF_GENOME" ] && [ -s "$PROJECT_CONTEXT_FILE" ]; then
@@ -2001,10 +2004,8 @@ select_ref_genome() {
             echo "$((i+1))) \$${MAPFILE[$i]} (${MAPVAL[$i]})"
         done
 
-        DOWNLOAD_OPTION=$(( ${#MAPFILE[@]} + 1 ))
-        MANUAL_OPTION=$(( ${#MAPFILE[@]} + 2 ))
+        MANUAL_OPTION=$(( ${#MAPFILE[@]} + 1 ))
         echo "------------------------"
-        echo "$DOWNLOAD_OPTION) 下載並安裝參考基因組"
         echo "$MANUAL_OPTION) 手動輸入絕對路徑"
         echo "q) 離開程式"
         echo "------------------------"
@@ -2019,11 +2020,6 @@ select_ref_genome() {
         if [[ "$REF_CHOICE" =~ ^[0-9]+$ ]] && [ "$REF_CHOICE" -ge 1 ] && [ "$REF_CHOICE" -le "${#MAPFILE[@]}" ]; then
             REF_GENOME="${MAPVAL[$((REF_CHOICE-1))]}"
             break
-        elif [[ "$REF_CHOICE" == "$DOWNLOAD_OPTION" ]]; then
-            if download_and_install_ref_genome; then
-                break
-            fi
-            echo "返回參考基因組選單..."
         elif [[ "$REF_CHOICE" == "$MANUAL_OPTION" ]]; then
             read -e -p "請輸入絕對路徑 (或輸入 'b' 返回選單): " REF_GENOME
             if [[ "$REF_GENOME" == "b" || "$REF_GENOME" == "B" ]]; then
@@ -3651,8 +3647,12 @@ EOF
 # ------------------------------------------------------------------------------
 main() {
     self_update_check_and_apply
-    check_dependencies
     select_analysis_scope
+    if [[ "$RUN_SCOPE" == "d" || "$RUN_SCOPE" == "D" ]]; then
+        download_and_install_ref_genome
+        exit $?
+    fi
+    check_dependencies
     configure_project_name
     configure_stage_paths
     start_logging
