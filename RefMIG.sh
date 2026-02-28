@@ -2172,13 +2172,6 @@ collect_inputs() {
         echo "Stage9 Fst 統計選項說明："
         echo "- stats : 輸出整體 FST.Unweight 與 FST.Weight（建議必跑）"
         echo "- stats2: 輸出視窗/區段層級統計（檔案較大、耗時較長）"
-        if [[ "$RUN_S7" != "y" ]]; then
-            read -p "是否指定 Skip LD-pruning VCF 路徑供 Stage9 紀錄？(y/n) [n]: " use_stage9_vcf
-            [ -z "$use_stage9_vcf" ] && use_stage9_vcf="n"
-            if [[ "$use_stage9_vcf" == "y" || "$use_stage9_vcf" == "Y" ]]; then
-                select_vcf_input "請選擇 Stage9 對應的 Skip LD-pruning VCF（僅作紀錄）" STAGE9_SKIP_LD_VCF_INPUT
-            fi
-        fi
         read -p "是否執行 stats2（較耗時）? (y/n) [n]: " S9_RUN_STATS2
         [ -z "$S9_RUN_STATS2" ] && S9_RUN_STATS2="n"
         if [[ "$RUN_S4" != "y" && "$RUN_S3" != "y" ]]; then
