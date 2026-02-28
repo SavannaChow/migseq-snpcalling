@@ -2192,9 +2192,9 @@ collect_inputs() {
     if [[ "$RUN_S9" == "y" ]]; then
         echo "-------------------------------------------------------"
         echo "[Stage 9 提醒]"
-        echo "1) 你需要一個『所有族群』bamfile 來建立 AllSites。"
-        echo "2) 你需要多個 population.bamfile 做 divergence 比較。"
-        echo "3) 你需要參考基因組。"
+        echo "1) 你需要定義要比較的族群 做 divergence 比較。"
+        echo "2) 每個族群都要有一個屬於他自己的bamfile"
+        echo "3) 例如pop1.bamfile, pop2.bamfile, pop3.bamfile"
         echo ""
         echo "Stage9 Fst 統計選項說明："
         echo "- stats : 輸出整體 FST.Unweight 與 FST.Weight（建議必跑）"
