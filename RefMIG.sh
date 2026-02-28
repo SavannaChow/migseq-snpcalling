@@ -42,21 +42,148 @@ REFGENOME_BASE_DIR="$HOME/RefGenome"
 REFGENOME_ENV_CHECK_FILE="$REFGENOME_BASE_DIR/.env_verified"
 REFGENOME_REQUIRED_CMDS=("esearch" "esummary" "xtract" "bwa" "samtools" "gunzip")
 
-check_dependencies() {
-    if [ -f "$ENV_CHECK_FILE" ]; then
-        echo "偵測env檢查標記,跳過驗證。"
-        return 0
-    fi
+get_core_dependency_tools() {
+    printf "%s\n" fastp bwa samtools parallel angsd ngsLD prune_graph bcftools Rscript java curl
+}
 
-    echo "chech env dependencies"
+get_refgenome_dependency_tools() {
+    printf "%s\n" esearch esummary xtract gunzip
+}
 
-    local tools=("fastp" "bwa" "samtools" "parallel" "angsd" "ngsLD" "prune_graph" "bcftools" "Rscript")
+get_dependency_help() {
+    local tool="$1"
+    case "$tool" in
+        fastp) echo "conda install -c bioconda fastp" ;;
+        bwa) echo "conda install -c bioconda bwa 或 apt install bwa" ;;
+        samtools) echo "conda install -c bioconda samtools 或 apt install samtools" ;;
+        parallel) echo "apt install parallel 或 brew install parallel" ;;
+        angsd) echo "https://www.popgen.dk/angsd/index.php/Installation" ;;
+        ngsLD) echo "https://github.com/fgvieira/ngsLD" ;;
+        prune_graph) echo "https://github.com/fgvieira/ngsLD (Included in ngsLD)" ;;
+        bcftools) echo "conda install -c bioconda bcftools 或 apt install bcftools" ;;
+        Rscript) echo "apt install r-base 或 brew install r" ;;
+        java) echo "apt install default-jre 或 brew install openjdk" ;;
+        curl) echo "apt install curl 或 brew install curl" ;;
+        esearch|esummary|xtract) echo "https://www.ncbi.nlm.nih.gov/books/NBK179288/" ;;
+        gunzip) echo "gzip 套件，通常系統已內建" ;;
+        *) echo "請自行安裝" ;;
+    esac
+}
 
+get_dependency_install_cmd() {
+    local tool="$1"
+    local has_conda="n"
+    local has_brew="n"
+    local has_apt="n"
+
+    command -v conda >/dev/null 2>&1 && has_conda="y"
+    command -v brew >/dev/null 2>&1 && has_brew="y"
+    command -v apt-get >/dev/null 2>&1 && has_apt="y"
+
+    case "$tool" in
+        fastp)
+            if [[ "$has_conda" == "y" ]]; then
+                echo "conda install -c bioconda fastp"
+            elif [[ "$has_brew" == "y" ]]; then
+                echo "brew install fastp"
+            else
+                echo ""
+            fi
+            ;;
+        bwa)
+            if [[ "$has_conda" == "y" ]]; then
+                echo "conda install -c bioconda bwa"
+            elif [[ "$has_brew" == "y" ]]; then
+                echo "brew install bwa"
+            elif [[ "$has_apt" == "y" ]]; then
+                echo "sudo apt-get install -y bwa"
+            else
+                echo ""
+            fi
+            ;;
+        samtools)
+            if [[ "$has_conda" == "y" ]]; then
+                echo "conda install -c bioconda samtools"
+            elif [[ "$has_brew" == "y" ]]; then
+                echo "brew install samtools"
+            elif [[ "$has_apt" == "y" ]]; then
+                echo "sudo apt-get install -y samtools"
+            else
+                echo ""
+            fi
+            ;;
+        parallel)
+            if [[ "$has_brew" == "y" ]]; then
+                echo "brew install parallel"
+            elif [[ "$has_apt" == "y" ]]; then
+                echo "sudo apt-get install -y parallel"
+            else
+                echo ""
+            fi
+            ;;
+        bcftools)
+            if [[ "$has_conda" == "y" ]]; then
+                echo "conda install -c bioconda bcftools"
+            elif [[ "$has_brew" == "y" ]]; then
+                echo "brew install bcftools"
+            elif [[ "$has_apt" == "y" ]]; then
+                echo "sudo apt-get install -y bcftools"
+            else
+                echo ""
+            fi
+            ;;
+        Rscript)
+            if [[ "$has_brew" == "y" ]]; then
+                echo "brew install r"
+            elif [[ "$has_apt" == "y" ]]; then
+                echo "sudo apt-get install -y r-base"
+            else
+                echo ""
+            fi
+            ;;
+        java)
+            if [[ "$has_brew" == "y" ]]; then
+                echo "brew install openjdk"
+            elif [[ "$has_apt" == "y" ]]; then
+                echo "sudo apt-get install -y default-jre"
+            else
+                echo ""
+            fi
+            ;;
+        curl)
+            if [[ "$has_brew" == "y" ]]; then
+                echo "brew install curl"
+            elif [[ "$has_apt" == "y" ]]; then
+                echo "sudo apt-get install -y curl"
+            else
+                echo ""
+            fi
+            ;;
+        esearch|esummary|xtract) echo 'sh -c "$(curl -fsSL https://ftp.ncbi.nlm.nih.gov/entrez/entrezdirect/install-edirect.sh)"' ;;
+        *) echo "" ;;
+    esac
+}
+
+run_dependency_audit() {
+    local interactive_mode="${1:-n}"
+    local exit_on_missing="${2:-n}"
     local missing_tools=()
-    local manual_install=()
+    local manual_follow_up=()
+    local tool install_cmd help_text do_install
+    local all_tools=()
 
-    for tool in "${tools[@]}"; do
-        if ! command -v "$tool" &> /dev/null; then
+    while IFS= read -r tool; do
+        [ -n "$tool" ] && all_tools+=("$tool")
+    done < <(
+        {
+            get_core_dependency_tools
+            get_refgenome_dependency_tools
+        } | awk '!seen[$0]++'
+    )
+
+    echo "檢查 RefMIG 所需軟體..."
+    for tool in "${all_tools[@]}"; do
+        if ! command -v "$tool" >/dev/null 2>&1; then
             missing_tools+=("$tool")
         fi
     done
@@ -64,40 +191,68 @@ check_dependencies() {
     if [ ${#missing_tools[@]} -eq 0 ]; then
         echo "所有套件已就緒。"
         touch "$ENV_CHECK_FILE"
-    else
-        echo "缺少以下套件: ${missing_tools[*]}"
-        for m_tool in "${missing_tools[@]}"; do
-            local action=""
-            case "$m_tool" in
-                fastp) action="conda install -c bioconda fastp" ;;
-                bwa) action="sudo apt-get install bwa" ;;
-                samtools) action="sudo apt-get install samtools" ;;
-                parallel) action="sudo apt-get install parallel" ;;
-                angsd) action="http://www.popgen.dk/angsd/index.php/Installation" ;;
-                ngsLD) action="https://github.com/fgvieira/ngsLD" ;;
-                prune_graph) action="https://github.com/fgvieira/ngsLD (Included in ngsLD)" ;;
-                bcftools) action="sudo apt-get install bcftools" ;;
-                Rscript) action="sudo apt-get install r-base" ;;
-                *) action="";;
-            esac
-            if [[ "$action" == http* ]]; then
-                echo "  - $m_tool: 請手動編譯安裝，參考網址: $action"
-                manual_install+=("$m_tool")
-            else
-                read -p "  - 偵測到 $m_tool 沒有安裝，是否嘗試自動安裝看看? (y/n): " do_install
-                if [[ "$do_install" == "y" ]]; then
-                    eval "$action"
-                else
-                    manual_install+=("$m_tool")
-                fi
-            fi
-        done
+        return 0
     fi
 
-    if [ ${#manual_install[@]} -ne 0 ]; then
-        echo "錯誤：請先解決上述手動安裝套件後再運行。"
-        exit 1
+    rm -f "$ENV_CHECK_FILE"
+    echo "缺少以下套件："
+    for tool in "${missing_tools[@]}"; do
+        help_text=$(get_dependency_help "$tool")
+        echo "  - $tool: $help_text"
+    done
+
+    if [[ "$interactive_mode" != "y" ]]; then
+        [[ "$exit_on_missing" == "y" ]] && exit 1
+        return 1
     fi
+
+    for tool in "${missing_tools[@]}"; do
+        install_cmd=$(get_dependency_install_cmd "$tool")
+        help_text=$(get_dependency_help "$tool")
+        if [ -z "$install_cmd" ]; then
+            manual_follow_up+=("$tool")
+            continue
+        fi
+
+        read -p "  - 偵測到 $tool 未安裝，是否嘗試自動安裝？(y/n): " do_install
+        if [[ "$do_install" == "y" || "$do_install" == "Y" ]]; then
+            if ! eval "$install_cmd"; then
+                echo "  安裝失敗：$tool"
+                manual_follow_up+=("$tool")
+            fi
+        else
+            manual_follow_up+=("$tool")
+        fi
+    done
+
+    missing_tools=()
+    for tool in "${all_tools[@]}"; do
+        if ! command -v "$tool" >/dev/null 2>&1; then
+            missing_tools+=("$tool")
+        fi
+    done
+
+    if [ ${#missing_tools[@]} -eq 0 ]; then
+        echo "所有套件已就緒。"
+        touch "$ENV_CHECK_FILE"
+        return 0
+    fi
+
+    echo "仍缺少以下套件："
+    for tool in "${missing_tools[@]}"; do
+        echo "  - $tool: $(get_dependency_help "$tool")"
+    done
+
+    [[ "$exit_on_missing" == "y" ]] && exit 1
+    return 1
+}
+
+check_dependencies() {
+    if [ -f "$ENV_CHECK_FILE" ]; then
+        echo "偵測env檢查標記,跳過驗證。"
+        return 0
+    fi
+    run_dependency_audit "y" "y"
 }
 
 ensure_refgenome_env_ready() {
@@ -1719,6 +1874,7 @@ select_analysis_scope() {
     echo "9) 只跑 Stage 9: Analysis of Genetic Divergence"
     echo "10) 自定義多階段 (不自動串接)"
     echo "d) 下載並安裝參考基因組"
+    echo "e) 檢查並安裝所需軟體"
     echo "q) 離開"
     echo ""
     read -p "選擇分析範圍: " RUN_SCOPE
@@ -1753,6 +1909,8 @@ select_analysis_scope() {
 ##old code##
             ;;
         d|D)
+            ;;
+        e|E)
             ;;
         *)
             echo "錯誤：無效選項。"
@@ -3663,6 +3821,10 @@ main() {
     select_analysis_scope
     if [[ "$RUN_SCOPE" == "d" || "$RUN_SCOPE" == "D" ]]; then
         download_and_install_ref_genome
+        exit $?
+    fi
+    if [[ "$RUN_SCOPE" == "e" || "$RUN_SCOPE" == "E" ]]; then
+        run_dependency_audit "y" "n"
         exit $?
     fi
     check_dependencies
