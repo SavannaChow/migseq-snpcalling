@@ -378,6 +378,7 @@ RUN_MODE="2"
 AUTO_PCA_CHOICE="2"
 AUTO_CLONE_CHOICE="2"
 RUN_SCOPE=""
+RUN_SCOPE_LABEL=""
 
 PROJECT_NAME=""
 BASE_PROJECT_NAME=""
@@ -1700,6 +1701,24 @@ print_command_preview() {
     [[ "$RUN_S9" == "y" ]] && echo "    [S9] angsd(all populations) -> AllSites ; angsd(doSaf per pop) ; realSFS(sfs/fst index/stats) -> matrix"
 }
 
+set_run_scope_label() {
+    case "$RUN_SCOPE" in
+        1) RUN_SCOPE_LABEL="Stage 1: Fastp Trimming" ;;
+        2) RUN_SCOPE_LABEL="Stage 2: BWA Alignment" ;;
+        3) RUN_SCOPE_LABEL="Stage 3: PCA Outlier 分析" ;;
+        4) RUN_SCOPE_LABEL="Stage 4: Clone Detection" ;;
+        5) RUN_SCOPE_LABEL="Stage 5: All SNP Site Map" ;;
+        6) RUN_SCOPE_LABEL="Stage 6: LD Pruned SNP Site Map" ;;
+        7) RUN_SCOPE_LABEL="Stage 7: Final SNP Calling (with LD pruning / skip LD pruning)" ;;
+        8) RUN_SCOPE_LABEL="Stage 8: Structure Auto Generator" ;;
+        9) RUN_SCOPE_LABEL="Stage 9: Analysis of Genetic Divergence" ;;
+        10) RUN_SCOPE_LABEL="自定義多階段 (不自動串接)" ;;
+        d|D) RUN_SCOPE_LABEL="下載並安裝參考基因組" ;;
+        e|E) RUN_SCOPE_LABEL="檢查並安裝所需軟體" ;;
+        *) RUN_SCOPE_LABEL="" ;;
+    esac
+}
+
 select_analysis_scope() {
     clear
     echo "$HEADER_TEXT"
@@ -1727,6 +1746,14 @@ select_analysis_scope() {
         echo "使用者取消操作，程式結束。"
         exit 0
     fi
+
+    set_run_scope_label
+    clear
+    echo "$HEADER_TEXT"
+    print_version_info
+    echo ""
+    [ -n "$RUN_SCOPE_LABEL" ] && echo "已選擇：$RUN_SCOPE_LABEL"
+    echo ""
 
     case "$RUN_SCOPE" in
         1) RUN_S1=y ;;
@@ -2191,6 +2218,7 @@ confirm_run() {
     echo "-------------------------------------------------------"
     echo ""
     printf "  %-15s : %s\n" "專案名稱" "$PROJECT_NAME"
+    [ -n "$RUN_SCOPE_LABEL" ] && printf "  %-15s : %s\n" "分析範圍" "$RUN_SCOPE_LABEL"
     [ -n "$RAW_PATH" ] && printf "  %-15s : %s\n" "原始資料路徑" "$RAW_PATH"
     [ -n "$REF_GENOME" ] && printf "  %-15s : %s\n" "參考基因組" "$REF_GENOME"
     [[ "$RUN_S3" == "y" || "$RUN_S4" == "y" ]] && printf "  %-15s : %s\n" "執行模式" "$MODE_STR"
