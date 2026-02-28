@@ -1830,7 +1830,6 @@ select_analysis_scope() {
     echo "9) 只跑 Stage 9: Analysis of Genetic Divergence (Fst by 2DSFS)"
     echo "10) 自定義多階段 (不自動串接)"
     echo "======================================================="
-    echo "======================================================="
     echo "d) 搜尋/下載/安裝參考基因組"
     echo "e) 檢查並安裝所需軟體"
     echo "q) 離開"
