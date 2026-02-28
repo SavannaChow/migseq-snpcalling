@@ -2348,11 +2348,11 @@ confirm_run() {
     print_command_preview
     echo ""
     echo "-------------------------------------------------------"
-    read -p "  以上是否正確？ (y: 開始執行 / n: 結束): " CONFIRM
+    read -p "  以上是否正確？ (y: 開始執行 / n: 返回主選單): " CONFIRM
 
     if [[ "$CONFIRM" != "y" && "$CONFIRM" != "Y" ]]; then
-        echo "[取消] 使用者中止程式。"
-        exit 0
+        return_to_main_menu
+        return $?
     fi
 }
 
@@ -3768,6 +3768,13 @@ main() {
         enable_command_capture
         print_runtime_config
         confirm_run
+        status=$?
+        if [ "$status" -eq "$RETURN_TO_MENU_CODE" ]; then
+            clear
+            continue
+        elif [ "$status" -ne 0 ]; then
+            exit "$status"
+        fi
         setup_output_dirs
 
         if [[ "$RUN_S1" == "y" ]]; then
