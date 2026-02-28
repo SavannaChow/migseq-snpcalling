@@ -38,6 +38,9 @@ UPDATE_STATUS="未檢查"
 UPDATE_REMOTE_VERSION="unknown"
 UPDATE_LOCAL_SHA=""
 UPDATE_REMOTE_SHA=""
+REFGENOME_BASE_DIR="$HOME/RefGenome"
+REFGENOME_ENV_CHECK_FILE="$REFGENOME_BASE_DIR/.env_verified"
+REFGENOME_REQUIRED_CMDS=("esearch" "esummary" "xtract" "bwa" "samtools" "gunzip")
 
 check_dependencies() {
     if [ -f "$ENV_CHECK_FILE" ]; then
@@ -95,6 +98,44 @@ check_dependencies() {
         echo "錯誤：請先解決上述手動安裝套件後再運行。"
         exit 1
     fi
+}
+
+ensure_refgenome_env_ready() {
+    local cmd
+    local extra_paths=("/usr/local/bin" "/opt/bin" "$HOME/bin" "$HOME/edirect")
+
+    mkdir -p "$REFGENOME_BASE_DIR"
+
+    if [[ -f "$REFGENOME_ENV_CHECK_FILE" ]]; then
+        return 0
+    fi
+
+    echo "[RefGenome] 初始化下載環境檢查..."
+    for p in "${extra_paths[@]}"; do
+        [[ -d "$p" ]] && export PATH="$p:$PATH"
+    done
+
+    for cmd in "${REFGENOME_REQUIRED_CMDS[@]}"; do
+        if command -v "$cmd" >/dev/null 2>&1; then
+            continue
+        fi
+
+        if [[ "$cmd" == "esearch" || "$cmd" == "esummary" || "$cmd" == "xtract" ]]; then
+            echo "[RefGenome] 偵測不到 NCBI EDirect，嘗試自動安裝..."
+            sh -c "$(curl -fsSL https://ftp.ncbi.nlm.nih.gov/entrez/entrezdirect/install-edirect.sh)" || {
+                echo "錯誤：EDirect 安裝失敗。"
+                return 1
+            }
+            export PATH="$HOME/edirect:$PATH"
+            continue
+        fi
+
+        echo "錯誤：缺少必要指令 '$cmd'，請先安裝後再試。"
+        return 1
+    done
+
+    touch "$REFGENOME_ENV_CHECK_FILE"
+    echo "[RefGenome] 環境檢查完成。"
 }
 
 ##old code##
@@ -398,7 +439,7 @@ start_stage_command_capture() {
 is_tracked_external_command() {
     local first="$1"
     case "$first" in
-        angsd|ngsLD|prune_graph|bcftools|bwa|samtools|fastp|parallel|Rscript|java|gzip|gunzip|cp|mv|find|ls|cat|cut|tail|sed|awk|sort|wc|realpath|structure|structureHarvester.py|git)
+        angsd|ngsLD|prune_graph|bcftools|bwa|samtools|fastp|parallel|Rscript|java|gzip|gunzip|cp|mv|find|ls|cat|cut|tail|sed|awk|sort|wc|realpath|structure|structureHarvester.py|git|curl|wget|esearch|esummary|xtract|grep|head|tr|tee)
             return 0
             ;;
         *)
@@ -1756,8 +1797,178 @@ configure_project_name() {
     done
 }
 
+register_ref_genome_env_var() {
+    local genome_path="$1"
+    local env_name user_input
+
+    while true; do
+        clear
+        echo "目前系統中已定義的變數名稱與路徑 (Ref_XXX):"
+        if grep -q "^export Ref_" "$CONF_FILE" 2>/dev/null; then
+            grep "^export Ref_" "$CONF_FILE" | sed 's/export //g' | sed 's/=/  -->  /g'
+        else
+            echo "(目前尚無設定任何 Ref_ 變數)"
+        fi
+        echo "--------------------------------------------------"
+        echo "請輸入參考基因組名稱"
+        echo "不要跟現有的重複，也不可使用空白或特殊字元"
+        read -p "REF_" user_input
+
+        if [ -z "$user_input" ]; then
+            echo "錯誤：未輸入名稱。"
+            continue
+        fi
+        if [[ ! "$user_input" =~ ^[A-Za-z0-9_]+$ ]]; then
+            echo "錯誤：名稱只允許英數字與底線。"
+            continue
+        fi
+
+        env_name="Ref_${user_input}"
+        if grep -q "^export ${env_name}=" "$CONF_FILE" 2>/dev/null; then
+            echo "錯誤：$env_name 已存在，請換一個名稱。"
+            continue
+        fi
+        break
+    done
+
+    printf 'export %s="%s"\n' "$env_name" "$genome_path" >> "$CONF_FILE"
+    export "$env_name=$genome_path"
+    echo "環境變數 '$env_name' 已加入 $CONF_FILE"
+}
+
+download_and_install_ref_genome() {
+    local query temp_data timestamp history_file index selected_line accession ftp_base
+    local target_dir file_name download_file full_url continue_proc fna_file abs_path
+
+    ensure_refgenome_env_ready || return 1
+
+    while true; do
+        clear
+        read -p "請輸入搜尋關鍵字 (物種名或 BioProject，q 離開): " query
+        if [[ "$query" == "q" || "$query" == "Q" ]]; then
+            return 1
+        fi
+        [ -z "$query" ] && continue
+
+        temp_data=$(mktemp)
+        timestamp=$(date +"%Y%m%d_%H%M%S")
+        history_file="$REFGENOME_BASE_DIR/SearchRecord_${query// /_}_${timestamp}.txt"
+
+        echo "正在檢索 NCBI Assembly 資料庫..."
+        esearch -db assembly -query "$query" \
+        | esummary \
+        | xtract -pattern DocumentSummary -def "NA" \
+            -element AssemblyAccession AssemblyName AssemblyStatus AssemblyType \
+                     ScaffoldN50 Coverage Isolate RefSeq_category \
+                     SubmissionDate LastUpdateDate SubmitterOrganization FtpPath_GenBank \
+            -block Stat -if @category -equals total_length -element Stat > "$temp_data"
+
+        if [ ! -s "$temp_data" ]; then
+            echo "找不到符合結果。"
+            rm -f "$temp_data"
+            continue
+        fi
+
+        awk -F'\t' '{
+            total_mb = $13 / 1000000
+            printf "-------------------- [ Index: %-4d ] --------------------\n", NR
+            printf "Submitter: %s(%s)\n", $11, $3
+            printf "Assembly Accession | Assembly Name : %s | %s\n", $1, $2
+            printf "Assembly Status    | Assembly Type : %s | %s\n", $3, $4
+            printf "Scaffold N50       | Coverage      : %s | %s X\n", $5, $6
+            printf "Isolate            | RefSeq Class  : %s | %s\n", $7, $8
+            printf "Submission Date    | Update Date   : %s | %s\n", $9, $10
+            printf "Total Genome Size  : %.0f MB\n", total_mb
+            printf "NCBI FTP 路徑: %s\n\n", $12
+        }' "$temp_data" | tee "$history_file"
+
+        echo "搜尋結果已存檔至: $history_file"
+        read -p "選擇要下載的 Genome 編號 (輸入 r 重新搜尋, q 離開): " index
+
+        if [[ "$index" == "q" || "$index" == "Q" ]]; then
+            rm -f "$temp_data"
+            return 1
+        fi
+        if [[ "$index" == "r" || "$index" == "R" ]]; then
+            rm -f "$temp_data"
+            continue
+        fi
+        if [[ ! "$index" =~ ^[0-9]+$ ]]; then
+            echo "錯誤：請輸入有效編號。"
+            rm -f "$temp_data"
+            continue
+        fi
+
+        selected_line=$(sed -n "${index}p" "$temp_data")
+        if [ -z "$selected_line" ]; then
+            echo "錯誤：找不到對應結果。"
+            rm -f "$temp_data"
+            continue
+        fi
+
+        accession=$(echo "$selected_line" | cut -f1)
+        rm -f "$temp_data"
+        break
+    done
+
+    echo "擷取 $accession FTP 位置..."
+    ftp_base=$(esearch -db assembly -query "$accession" | esummary | xtract -pattern DocumentSummary -element FtpPath_GenBank | tr ' ' '\n' | grep "$accession" | head -n 1 | sed 's|^ftp://|https://|')
+
+    if [ -z "$ftp_base" ]; then
+        echo "錯誤：找不到 FTP path。"
+        return 1
+    fi
+
+    target_dir="$REFGENOME_BASE_DIR/$accession"
+    mkdir -p "$target_dir"
+
+    file_name=$(basename "$ftp_base")
+    download_file="${file_name}_genomic.fna.gz"
+    full_url="${ftp_base}/${download_file}"
+
+    echo "下載 Genome $accession 至 $target_dir ..."
+    if command -v wget >/dev/null 2>&1; then
+        wget -c --tries=0 -P "$target_dir" "$full_url" || return 1
+    elif command -v curl >/dev/null 2>&1; then
+        curl -fL --retry 5 -o "$target_dir/$download_file" "$full_url" || return 1
+    else
+        echo "錯誤：找不到 wget 或 curl。"
+        return 1
+    fi
+
+    echo "--------------------------------------------------"
+    echo "基因組檔案下載完成。"
+    read -p "是否繼續設定環境變數並執行解壓縮與索引建置？(y/n): " continue_proc
+    if [[ "$continue_proc" != "y" && "$continue_proc" != "Y" ]]; then
+        echo "程序已終止。檔案保留在 $target_dir。"
+        return 1
+    fi
+
+    echo "解壓縮..."
+    gunzip -f "$target_dir/$download_file" || return 1
+
+    fna_file="$target_dir/${file_name}_genomic.fna"
+    abs_path=$(realpath "$fna_file")
+
+    register_ref_genome_env_var "$abs_path" || return 1
+
+    echo "建立 BWA index..."
+    bwa index "$abs_path" || { echo "BWA index 失敗"; return 1; }
+
+    echo "建立 Samtools index..."
+    samtools faidx "$abs_path" || { echo "Samtools faidx 失敗"; return 1; }
+
+    echo "--------------------------------------------------"
+    echo "Process complete."
+    echo "Genome path: $abs_path"
+    echo "請重新執行: source $CONF_FILE 使設定在新 shell 生效。"
+
+    REF_GENOME="$abs_path"
+    return 0
+}
+
 select_ref_genome() {
-    local stored_ref
+    local stored_ref DOWNLOAD_OPTION MANUAL_OPTION
 
     # 若專案設定檔已有參考基因組且檔案存在，直接沿用，不重複詢問。
     if [ -z "$REF_GENOME" ] && [ -s "$PROJECT_CONTEXT_FILE" ]; then
@@ -1790,8 +2001,10 @@ select_ref_genome() {
             echo "$((i+1))) \$${MAPFILE[$i]} (${MAPVAL[$i]})"
         done
 
-        MANUAL_OPTION=$(( ${#MAPFILE[@]} + 1 ))
+        DOWNLOAD_OPTION=$(( ${#MAPFILE[@]} + 1 ))
+        MANUAL_OPTION=$(( ${#MAPFILE[@]} + 2 ))
         echo "------------------------"
+        echo "$DOWNLOAD_OPTION) 下載並安裝參考基因組"
         echo "$MANUAL_OPTION) 手動輸入絕對路徑"
         echo "q) 離開程式"
         echo "------------------------"
@@ -1806,6 +2019,11 @@ select_ref_genome() {
         if [[ "$REF_CHOICE" =~ ^[0-9]+$ ]] && [ "$REF_CHOICE" -ge 1 ] && [ "$REF_CHOICE" -le "${#MAPFILE[@]}" ]; then
             REF_GENOME="${MAPVAL[$((REF_CHOICE-1))]}"
             break
+        elif [[ "$REF_CHOICE" == "$DOWNLOAD_OPTION" ]]; then
+            if download_and_install_ref_genome; then
+                break
+            fi
+            echo "返回參考基因組選單..."
         elif [[ "$REF_CHOICE" == "$MANUAL_OPTION" ]]; then
             read -e -p "請輸入絕對路徑 (或輸入 'b' 返回選單): " REF_GENOME
             if [[ "$REF_GENOME" == "b" || "$REF_GENOME" == "B" ]]; then
