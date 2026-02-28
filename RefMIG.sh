@@ -1873,6 +1873,7 @@ select_analysis_scope() {
     echo "8) 只跑 Stage 8: Structure Auto Generator"
     echo "9) 只跑 Stage 9: Analysis of Genetic Divergence"
     echo "10) 自定義多階段 (不自動串接)"
+    echo "======================================================="
     echo "d) 下載並安裝參考基因組"
     echo "e) 檢查並安裝所需軟體"
     echo "q) 離開"
