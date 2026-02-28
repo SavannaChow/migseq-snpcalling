@@ -1800,18 +1800,22 @@ configure_project_name() {
     done
 }
 
+display_installed_ref_genomes() {
+    echo "目前系統中已定義的參考基因組 (Ref_XXX):"
+    if grep -q "^export Ref_" "$CONF_FILE" 2>/dev/null; then
+        grep "^export Ref_" "$CONF_FILE" | sed 's/export //g' | sed 's/=/  -->  /g'
+    else
+        echo "(目前尚無設定任何 Ref_ 變數)"
+    fi
+}
+
 register_ref_genome_env_var() {
     local genome_path="$1"
     local env_name user_input
 
     while true; do
         clear
-        echo "目前系統中已定義的變數名稱與路徑 (Ref_XXX):"
-        if grep -q "^export Ref_" "$CONF_FILE" 2>/dev/null; then
-            grep "^export Ref_" "$CONF_FILE" | sed 's/export //g' | sed 's/=/  -->  /g'
-        else
-            echo "(目前尚無設定任何 Ref_ 變數)"
-        fi
+        display_installed_ref_genomes
         echo "--------------------------------------------------"
         echo "請輸入參考基因組名稱"
         echo "不要跟現有的重複，也不可使用空白或特殊字元"
@@ -1847,6 +1851,8 @@ download_and_install_ref_genome() {
 
     while true; do
         clear
+        display_installed_ref_genomes
+        echo "--------------------------------------------------"
         read -p "請輸入搜尋關鍵字 (物種名或 BioProject，q 離開): " query
         if [[ "$query" == "q" || "$query" == "Q" ]]; then
             return 1
