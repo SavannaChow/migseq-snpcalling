@@ -343,7 +343,7 @@ print_version_info() {
 # ------------------------------------------------------------------------------
 HEADER_TEXT="===========================================================================
    MIG-seq Genomic Analysis Pipeline (Refgenome mapping)
-   開發者：Savanna Chow (savanna201@gmail.com) 使用 Gemini 協助開發
+   Savanna Chow (savanna201@gmail.com) 使用 Gemini 協助開發
    分析邏輯基於 https://github.com/jamesfifer/JapanRE
    Credit: AllenChen's lab, Biodiversity Research Center, Academia Sinica
 ==========================================================================="
