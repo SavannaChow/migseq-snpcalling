@@ -391,7 +391,6 @@ ALL_SITES_INPUT=""
 STR_INPUT=""
 S7_STR_FILE=""
 BAM_LIST_DIV_ALL_INPUT=""
-STAGE9_SKIP_LD_VCF_INPUT=""
 STAGE9_LAST_RUN_DIR=""
 S9_RUN_STATS2="n"
 STAGE8_POPINFO_ENABLED="n"
@@ -2302,7 +2301,6 @@ confirm_run() {
     [[ "$RUN_S7" == "y" ]] && printf "  %-15s : %s\n" "Stage7 做LD pruning" "$RUN_S7_WITH_LD"
     [[ "$RUN_S7" == "y" ]] && printf "  %-15s : %s\n" "Stage7 跳過LD pruning" "$RUN_S7_SKIP_LD"
     [[ "$RUN_S9" == "y" ]] && printf "  %-15s : %s\n" "Stage9 全族群BAM" "$BAM_LIST_DIV_ALL_INPUT"
-    [[ "$RUN_S9" == "y" ]] && printf "  %-15s : %s\n" "Stage9 參考No-LD" "$STAGE9_SKIP_LD_VCF_INPUT"
     [[ "$RUN_S9" == "y" ]] && printf "  %-15s : %s\n" "Stage9 跑stats2" "$S9_RUN_STATS2"
 
     if [[ "$RUN_MODE" == "1" && "$RUN_S3" == "y" ]]; then
@@ -3219,10 +3217,6 @@ run_stage9_genetic_divergence() {
         fi
     fi
 
-    if [ -z "$STAGE9_SKIP_LD_VCF_INPUT" ] && [ -f "$STAGE7/Skip_LD_Pruning/${PROJECT_NAME}_snps_final_Skip_LD_Pruning.vcf" ]; then
-        STAGE9_SKIP_LD_VCF_INPUT="$STAGE7/Skip_LD_Pruning/${PROJECT_NAME}_snps_final_Skip_LD_Pruning.vcf"
-    fi
-
     stage9_dir="$STAGE9/divergence"
     stage9_pop_dir="$stage9_dir/population_bamfiles"
     stage9_fst_dir="$stage9_dir/fst_results"
@@ -3245,7 +3239,6 @@ run_stage9_genetic_divergence() {
 
     echo "-------------------------------------------------------"
     echo "[Stage 9] 分析資料夾已建立：$stage9_dir"
-    [ -n "$STAGE9_SKIP_LD_VCF_INPUT" ] && echo "[Stage 9] 參考 Skip LD VCF: $STAGE9_SKIP_LD_VCF_INPUT"
     echo "[Stage 9] 偵測到 ${#pop_files[@]} 個 population.bamfile"
     echo "-------------------------------------------------------"
 
