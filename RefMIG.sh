@@ -32,6 +32,7 @@ APP_UPDATED_AT="2026-02-25"
 SELF_UPDATE_BRANCH="main"
 SELF_UPDATE_REPO_RAW="https://raw.githubusercontent.com/SavannaChow/migseq-snpcalling/${SELF_UPDATE_BRANCH}/RefMIG.sh"
 SELF_UPDATE_TIMEOUT=5
+RETURN_TO_MENU_CODE=99
 SELF_UPDATE_BYPASS_FILE=".update_check_bypass_until"
 SELF_UPDATE_BYPASS_SECONDS=21600
 UPDATE_STATUS="未檢查"
@@ -404,6 +405,35 @@ TRACE_ALL_TO_MAIN_LOG=false
 # ------------------------------------------------------------------------------
 # 輔助函式
 # ------------------------------------------------------------------------------
+return_to_main_menu() {
+    clear
+    return "$RETURN_TO_MENU_CODE"
+}
+
+reset_runtime_state() {
+    RUN_S1=n; RUN_S2=n; RUN_S3=n; RUN_S4=n; RUN_S5=n; RUN_S6=n; RUN_S7=n; RUN_S8=n; RUN_S9=n
+    RUN_S7_WITH_LD="y"
+    RUN_S7_SKIP_LD="n"
+    RUN_MODE="2"
+    AUTO_PCA_CHOICE="2"
+    AUTO_CLONE_CHOICE="2"
+    RUN_SCOPE=""
+    RUN_SCOPE_LABEL=""
+    RAW_PATH=""
+    REF_GENOME=""
+    BAM_LIST=""
+    TRIM_INPUT_DIR=""
+    LD_SITES_INPUT=""
+    ALL_SITES_INPUT=""
+    STR_INPUT=""
+    S7_STR_FILE=""
+    BAM_LIST_DIV_ALL_INPUT=""
+    STAGE9_LAST_RUN_DIR=""
+    S9_RUN_STATS2="n"
+    STAGE8_POPINFO_ENABLED="n"
+    S6_MAX_KB_DIST="50"
+}
+
 ask_to_run() {
     local step_name=$1
     local check_target=$2
@@ -695,8 +725,8 @@ collect_stage9_population_bamfiles() {
                 return 0
                 ;;
             q|Q)
-                echo "使用者取消 Stage9。"
-                exit 0
+                return_to_main_menu
+                return $?
                 ;;
             *)
                 echo "錯誤：無效選擇。"
@@ -799,7 +829,7 @@ select_bamfile_input() {
         fi
         echo " r) 重新掃描"
         echo " m) 手動輸入完整路徑"
-        echo " q) 離開程式"
+        echo " q) 返回主選單"
 
         if [ "${#found_lists[@]}" -gt 0 ]; then
             read -p "請選擇 (1-${#found_lists[@]}, r, m, q): " choice
@@ -808,8 +838,8 @@ select_bamfile_input() {
         fi
 
         if [[ "$choice" == "q" || "$choice" == "Q" ]]; then
-            echo "使用者取消操作，程式結束。"
-            exit 0
+            return_to_main_menu
+            return $?
         elif [[ "$choice" == "r" || "$choice" == "R" ]]; then
             continue
         elif [[ "$choice" == "m" || "$choice" == "M" ]]; then
@@ -852,7 +882,7 @@ select_stage34_bamfile_input() {
         fi
         echo " r) 重新掃描"
         echo " m) 手動輸入完整路徑"
-        echo " q) 離開程式"
+        echo " q) 返回主選單"
 
         if [ "${#found_lists[@]}" -gt 0 ]; then
             read -p "請選擇 (1-${#found_lists[@]}, r, m, q): " choice
@@ -861,8 +891,8 @@ select_stage34_bamfile_input() {
         fi
 
         if [[ "$choice" == "q" || "$choice" == "Q" ]]; then
-            echo "使用者取消操作，程式結束。"
-            exit 0
+            return_to_main_menu
+            return $?
         elif [[ "$choice" == "r" || "$choice" == "R" ]]; then
             continue
         elif [[ "$choice" == "m" || "$choice" == "M" ]]; then
@@ -905,7 +935,7 @@ select_trim_dir_input() {
         fi
         echo " r) 重新掃描"
         echo " m) 手動輸入完整路徑"
-        echo " q) 離開程式"
+        echo " q) 返回主選單"
 
         if [ "${#found_dirs[@]}" -gt 0 ]; then
             read -p "請選擇 (1-${#found_dirs[@]}, r, m, q): " choice
@@ -914,8 +944,8 @@ select_trim_dir_input() {
         fi
 
         if [[ "$choice" == "q" || "$choice" == "Q" ]]; then
-            echo "使用者取消操作，程式結束。"
-            exit 0
+            return_to_main_menu
+            return $?
         elif [[ "$choice" == "r" || "$choice" == "R" ]]; then
             continue
         elif [[ "$choice" == "m" || "$choice" == "M" ]]; then
@@ -958,7 +988,7 @@ select_directory_input() {
         fi
         echo " r) 重新掃描"
         echo " m) 手動輸入完整路徑"
-        echo " q) 離開程式"
+        echo " q) 返回主選單"
 
         if [ "${#found_dirs[@]}" -gt 0 ]; then
             read -p "請選擇 (1-${#found_dirs[@]}, r, m, q): " choice
@@ -967,8 +997,8 @@ select_directory_input() {
         fi
 
         if [[ "$choice" == "q" || "$choice" == "Q" ]]; then
-            echo "使用者取消操作，程式結束。"
-            exit 0
+            return_to_main_menu
+            return $?
         elif [[ "$choice" == "r" || "$choice" == "R" ]]; then
             continue
         elif [[ "$choice" == "m" || "$choice" == "M" ]]; then
@@ -1014,7 +1044,7 @@ select_ld_sites_input() {
         fi
         echo " r) 重新掃描"
         echo " m) 手動輸入完整路徑"
-        echo " q) 離開程式"
+        echo " q) 返回主選單"
 
         if [ "${#found_sites[@]}" -gt 0 ]; then
             read -p "請選擇 (1-${#found_sites[@]}, r, m, q): " choice
@@ -1023,8 +1053,8 @@ select_ld_sites_input() {
         fi
 
         if [[ "$choice" == "q" || "$choice" == "Q" ]]; then
-            echo "使用者取消操作，程式結束。"
-            exit 0
+            return_to_main_menu
+            return $?
         elif [[ "$choice" == "r" || "$choice" == "R" ]]; then
             continue
         elif [[ "$choice" == "m" || "$choice" == "M" ]]; then
@@ -1067,7 +1097,7 @@ select_str_input() {
         fi
         echo " r) 重新掃描"
         echo " m) 手動輸入完整路徑"
-        echo " q) 離開程式"
+        echo " q) 返回主選單"
 
         if [ "${#found_str[@]}" -gt 0 ]; then
             read -p "請選擇 (1-${#found_str[@]}, r, m, q): " choice
@@ -1076,8 +1106,8 @@ select_str_input() {
         fi
 
         if [[ "$choice" == "q" || "$choice" == "Q" ]]; then
-            echo "使用者取消操作，程式結束。"
-            exit 0
+            return_to_main_menu
+            return $?
         elif [[ "$choice" == "r" || "$choice" == "R" ]]; then
             continue
         elif [[ "$choice" == "m" || "$choice" == "M" ]]; then
@@ -1120,7 +1150,7 @@ select_vcf_input() {
         fi
         echo " r) 重新掃描"
         echo " m) 手動輸入完整路徑"
-        echo " q) 離開程式"
+        echo " q) 返回主選單"
 
         if [ "${#found_vcf[@]}" -gt 0 ]; then
             read -p "請選擇 (1-${#found_vcf[@]}, r, m, q): " choice
@@ -1129,8 +1159,8 @@ select_vcf_input() {
         fi
 
         if [[ "$choice" == "q" || "$choice" == "Q" ]]; then
-            echo "使用者取消操作，程式結束。"
-            exit 0
+            return_to_main_menu
+            return $?
         elif [[ "$choice" == "r" || "$choice" == "R" ]]; then
             continue
         elif [[ "$choice" == "m" || "$choice" == "M" ]]; then
@@ -1800,6 +1830,7 @@ select_analysis_scope() {
     echo "9) 只跑 Stage 9: Analysis of Genetic Divergence"
     echo "10) 自定義多階段 (不自動串接)"
     echo "d) 下載並安裝參考基因組"
+    echo "e) 檢查並安裝所需軟體"
     echo "q) 離開"
     echo ""
     read -p "選擇分析範圍: " RUN_SCOPE
@@ -1842,6 +1873,8 @@ select_analysis_scope() {
 ##old code##
             ;;
         d|D)
+            ;;
+        e|E)
             ;;
         *)
             echo "錯誤：無效選項。"
@@ -2109,14 +2142,14 @@ select_ref_genome() {
         MANUAL_OPTION=$(( ${#MAPFILE[@]} + 1 ))
         echo "------------------------"
         echo "$MANUAL_OPTION) 手動輸入絕對路徑"
-        echo "q) 離開程式"
+        echo "q) 返回主選單"
         echo "------------------------"
 
         read -p "請選擇參考基因組 (1-$MANUAL_OPTION, 或 q): " REF_CHOICE
 
         if [[ "$REF_CHOICE" == "q" || "$REF_CHOICE" == "Q" ]]; then
-            echo "使用者取消操作，程式結束。"
-            exit 0
+            return_to_main_menu
+            return $?
         fi
 
         if [[ "$REF_CHOICE" =~ ^[0-9]+$ ]] && [ "$REF_CHOICE" -ge 1 ] && [ "$REF_CHOICE" -le "${#MAPFILE[@]}" ]; then
@@ -2164,35 +2197,35 @@ collect_inputs() {
         echo "1) 自動模式 (預設決策)"
         echo "2) 互動模式 (每次詢問)"
         echo ""
-        read -p "請輸入選項 (1, 2, 或 q 離開): " RUN_MODE
-        [[ "$RUN_MODE" == "q" || "$RUN_MODE" == "Q" ]] && { echo "使用者取消操作。"; exit 0; }
+        read -p "請輸入選項 (1, 2, 或 q 返回主選單): " RUN_MODE
+        [[ "$RUN_MODE" == "q" || "$RUN_MODE" == "Q" ]] && { return_to_main_menu; return $?; }
 
         if [ "$RUN_MODE" == "1" ]; then
             if [[ "$RUN_S3" == "y" ]]; then
-                read -p "  > 偵測到 PCA Outlier 時處理方式 (1:移除, 2:保留, q:離開): " AUTO_PCA_CHOICE
-                [[ "$AUTO_PCA_CHOICE" == "q" || "$AUTO_PCA_CHOICE" == "Q" ]] && { echo "使用者取消操作。"; exit 0; }
+                read -p "  > 偵測到 PCA Outlier 時處理方式 (1:移除, 2:保留, q:返回主選單): " AUTO_PCA_CHOICE
+                [[ "$AUTO_PCA_CHOICE" == "q" || "$AUTO_PCA_CHOICE" == "Q" ]] && { return_to_main_menu; return $?; }
             fi
             if [[ "$RUN_S4" == "y" ]]; then
-                read -p "  > 偵測到 Clone 樣本時處理方式 (1:移除, 2:保留, q:離開): " AUTO_CLONE_CHOICE
-                [[ "$AUTO_CLONE_CHOICE" == "q" || "$AUTO_CLONE_CHOICE" == "Q" ]] && { echo "使用者取消操作。"; exit 0; }
+                read -p "  > 偵測到 Clone 樣本時處理方式 (1:移除, 2:保留, q:返回主選單): " AUTO_CLONE_CHOICE
+                [[ "$AUTO_CLONE_CHOICE" == "q" || "$AUTO_CLONE_CHOICE" == "Q" ]] && { return_to_main_menu; return $?; }
             fi
         fi
     fi
 
     if [[ "$RUN_S1" == "y" ]]; then
-        select_directory_input "請選擇 Stage1 原始序列 (raw data) 資料夾路徑" RAW_PATH
+        select_directory_input "請選擇 Stage1 原始序列 (raw data) 資料夾路徑" RAW_PATH || return $?
     fi
 
     if [[ "$RUN_S2" == "y" ]]; then
         if [[ "$RUN_S1" == "y" ]]; then
             TRIM_INPUT_DIR="$STAGE1/trim"
         else
-            select_trim_dir_input "請選擇 Stage2 要用的 trimmed fastq 資料夾路徑" TRIM_INPUT_DIR
+            select_trim_dir_input "請選擇 Stage2 要用的 trimmed fastq 資料夾路徑" TRIM_INPUT_DIR || return $?
         fi
     fi
 
     if [[ "$RUN_S2" == "y" || "$RUN_S5" == "y" || "$RUN_S6" == "y" || "$RUN_S7" == "y" || "$RUN_S9" == "y" ]]; then
-        select_ref_genome
+        select_ref_genome || return $?
     fi
 
     if [[ "$RUN_S3" == "y" ]]; then
@@ -2203,20 +2236,20 @@ collect_inputs() {
         if [[ "$RUN_S3" == "y" || "$RUN_S2" == "y" ]]; then
             :
         else
-            select_bamfile_input "請選擇 Stage4 clone detection 要使用的 BAM list (.bamfile)" BAM_LIST_CLONE_INPUT
+            select_bamfile_input "請選擇 Stage4 clone detection 要使用的 BAM list (.bamfile)" BAM_LIST_CLONE_INPUT || return $?
         fi
     fi
 
     if [[ "$RUN_S5" == "y" && "$RUN_S4" != "y" && "$RUN_S3" != "y" && "$RUN_S2" != "y" ]]; then
-        select_bamfile_input "請選擇 Stage5 All SNP sites 要使用的 BAM list (.bamfile)" BAM_LIST_LD_INPUT
+        select_bamfile_input "請選擇 Stage5 All SNP sites 要使用的 BAM list (.bamfile)" BAM_LIST_LD_INPUT || return $?
     fi
 
     if [[ "$RUN_S6" == "y" ]]; then
         if [[ "$RUN_S5" != "y" && "$RUN_S4" != "y" && "$RUN_S3" != "y" && "$RUN_S2" != "y" ]]; then
-            select_bamfile_input "請選擇 Stage6 LD pruning 要使用的 BAM list (.bamfile)" BAM_LIST_FINAL_INPUT
+            select_bamfile_input "請選擇 Stage6 LD pruning 要使用的 BAM list (.bamfile)" BAM_LIST_FINAL_INPUT || return $?
         fi
         if [[ "$RUN_S5" != "y" ]]; then
-            select_ld_sites_input "請選擇 Stage6 要使用的 All SNP sites 檔案" ALL_SITES_INPUT
+            select_ld_sites_input "請選擇 Stage6 要使用的 All SNP sites 檔案" ALL_SITES_INPUT || return $?
         fi
     fi
 
@@ -2225,7 +2258,7 @@ collect_inputs() {
     fi
 
     if [[ "$RUN_S7" == "y" && "$RUN_S6" != "y" && "$RUN_S5" != "y" && "$RUN_S4" != "y" && "$RUN_S3" != "y" && "$RUN_S2" != "y" ]]; then
-        select_bamfile_input "請選擇 Stage7 Final SNP 要使用的 BAM list (.bamfile)" BAM_LIST_FINAL_INPUT
+        select_bamfile_input "請選擇 Stage7 Final SNP 要使用的 BAM list (.bamfile)" BAM_LIST_FINAL_INPUT || return $?
     fi
 
     if [[ "$RUN_S7" == "y" ]]; then
@@ -2238,16 +2271,16 @@ collect_inputs() {
             exit 1
         fi
         if [[ "$RUN_S7_WITH_LD" == "y" && "$RUN_S6" != "y" ]]; then
-            select_ld_sites_input "請選擇 Stage7(with LD pruning) 要使用的 LD pruned sites 檔案" LD_SITES_INPUT
+            select_ld_sites_input "請選擇 Stage7(with LD pruning) 要使用的 LD pruned sites 檔案" LD_SITES_INPUT || return $?
         fi
         if [[ "$RUN_S7_SKIP_LD" == "y" && "$RUN_S5" != "y" ]]; then
-            select_ld_sites_input "請選擇 Stage7(skip LD pruning) 要使用的 All SNP sites 檔案" ALL_SITES_INPUT
+            select_ld_sites_input "請選擇 Stage7(skip LD pruning) 要使用的 All SNP sites 檔案" ALL_SITES_INPUT || return $?
         fi
     fi
 
     if [[ "$RUN_S8" == "y" ]]; then
         if [[ "$RUN_S7" != "y" || "$RUN_S7_WITH_LD" != "y" ]]; then
-            select_str_input "請選擇 Stage8 要使用的 STRUCTURE .str 檔案（建議 Stage7/LD_Pruned 輸出）" STR_INPUT
+            select_str_input "請選擇 Stage8 要使用的 STRUCTURE .str 檔案（建議 Stage7/LD_Pruned 輸出）" STR_INPUT || return $?
         fi
     fi
 
@@ -2264,9 +2297,9 @@ collect_inputs() {
         read -p "是否執行 stats2（較耗時）? (y/n) [n]: " S9_RUN_STATS2
         [ -z "$S9_RUN_STATS2" ] && S9_RUN_STATS2="n"
         if [[ "$RUN_S4" != "y" && "$RUN_S3" != "y" ]]; then
-            select_stage34_bamfile_input "請選擇 Stage9 要使用的『所有族群』BAM list (.bamfile)" BAM_LIST_DIV_ALL_INPUT
+            select_stage34_bamfile_input "請選擇 Stage9 要使用的『所有族群』BAM list (.bamfile)" BAM_LIST_DIV_ALL_INPUT || return $?
         fi
-        collect_stage9_population_bamfiles "$STAGE9/divergence"
+        collect_stage9_population_bamfiles "$STAGE9/divergence" || return $?
     fi
 }
 
@@ -3699,75 +3732,100 @@ EOF
 # ------------------------------------------------------------------------------
 main() {
     self_update_check_and_apply
-    select_analysis_scope
-    if [[ "$RUN_SCOPE" == "d" || "$RUN_SCOPE" == "D" ]]; then
-        download_and_install_ref_genome
-        exit $?
-    fi
-    check_dependencies
-    configure_project_name
-    configure_stage_paths
-    start_logging
-    enable_command_capture
-    collect_inputs
-    print_runtime_config
-    confirm_run
-    setup_output_dirs
+    while true; do
+        local status=0
+        reset_runtime_state
+        select_analysis_scope
 
-    if [[ "$RUN_S1" == "y" ]]; then
-        start_stage_command_capture "$STAGE1" "Stage1_Fastp"
-        run_stage1_fastp
-    fi
-    if [[ "$RUN_S2" == "y" ]]; then
-        start_stage_command_capture "$STAGE2" "Stage2_Alignment"
-        run_stage2_alignment
-    fi
+        if [[ "$RUN_SCOPE" == "d" || "$RUN_SCOPE" == "D" ]]; then
+            download_and_install_ref_genome
+            echo ""
+            read -p "按 Enter 返回主選單..." _
+            clear
+            continue
+        fi
+        if [[ "$RUN_SCOPE" == "e" || "$RUN_SCOPE" == "E" ]]; then
+            run_dependency_audit "y" "n"
+            echo ""
+            read -p "按 Enter 返回主選單..." _
+            clear
+            continue
+        fi
 
-    if [[ "$RUN_S3" == "y" ]]; then
-        start_stage_command_capture "$STAGE3" "Stage3_PCA"
-        run_stage3_pca
-    fi
+        check_dependencies
+        configure_project_name
+        configure_stage_paths
+        collect_inputs
+        status=$?
+        if [ "$status" -eq "$RETURN_TO_MENU_CODE" ]; then
+            clear
+            continue
+        elif [ "$status" -ne 0 ]; then
+            exit "$status"
+        fi
 
-    if [[ "$RUN_S4" == "y" ]]; then
-        start_stage_command_capture "$STAGE4" "Stage4_Clone"
-        run_stage4_clone
-    fi
+        start_logging
+        enable_command_capture
+        print_runtime_config
+        confirm_run
+        setup_output_dirs
 
-    if [[ "$RUN_S5" == "y" || "$RUN_S6" == "y" || "$RUN_S7" == "y" ]]; then
-        resolve_bam_list_for_stage5_to_7
-    fi
+        if [[ "$RUN_S1" == "y" ]]; then
+            start_stage_command_capture "$STAGE1" "Stage1_Fastp"
+            run_stage1_fastp
+        fi
+        if [[ "$RUN_S2" == "y" ]]; then
+            start_stage_command_capture "$STAGE2" "Stage2_Alignment"
+            run_stage2_alignment
+        fi
 
-    if [[ "$RUN_S5" == "y" ]]; then
-        start_stage_command_capture "$STAGE5" "Stage5_AllSNP"
-        run_stage5_all_snp_sites
-    fi
-    if [[ "$RUN_S6" == "y" ]]; then
-        start_stage_command_capture "$STAGE6" "Stage6_LDPruning"
-        run_stage6_ld_pruning_sites
-    fi
-    if [[ "$RUN_S7" == "y" ]]; then
-        start_stage_command_capture "$STAGE7" "Stage7_FinalSNP"
-        run_stage7_final_snp
-    fi
-    if [[ "$RUN_S8" == "y" ]]; then
-        start_stage_command_capture "$STAGE8" "Stage8_Structure"
-        run_stage8_structure_auto
-    fi
-    if [[ "$RUN_S9" == "y" ]]; then
-        start_stage_command_capture "$STAGE9" "Stage9_Divergence"
-        run_stage9_genetic_divergence
-    fi
+        if [[ "$RUN_S3" == "y" ]]; then
+            start_stage_command_capture "$STAGE3" "Stage3_PCA"
+            run_stage3_pca
+        fi
 
-    echo "======================================================="
-    echo "分析結束: $(date)"
-    [[ "$RUN_S7" == "y" ]] && [[ "$RUN_S7_WITH_LD" == "y" ]] && echo "產出 VCF(with LD pruning): $STAGE7/LD_Pruned/${PROJECT_NAME}_snps_final_with_LD_Pruning.vcf"
-    [[ "$RUN_S7" == "y" ]] && [[ "$RUN_S7_SKIP_LD" == "y" ]] && echo "產出 VCF(skip LD pruning): $STAGE7/Skip_LD_Pruning/${PROJECT_NAME}_snps_final_Skip_LD_Pruning.vcf"
-    [[ "$RUN_S9" == "y" ]] && echo "Stage9 輸出資料夾: $STAGE9_LAST_RUN_DIR"
-    echo "日誌位置: $LOG_FILE"
-    echo "VCF可用PGDSpider做轉換"
-    echo "https://software.bioinformatics.unibe.ch/pgdspider/"
-    echo "此分析參考 James Fifer https://github.com/jamesfifer/JapanRE"
-    echo "======================================================="
+        if [[ "$RUN_S4" == "y" ]]; then
+            start_stage_command_capture "$STAGE4" "Stage4_Clone"
+            run_stage4_clone
+        fi
+
+        if [[ "$RUN_S5" == "y" || "$RUN_S6" == "y" || "$RUN_S7" == "y" ]]; then
+            resolve_bam_list_for_stage5_to_7
+        fi
+
+        if [[ "$RUN_S5" == "y" ]]; then
+            start_stage_command_capture "$STAGE5" "Stage5_AllSNP"
+            run_stage5_all_snp_sites
+        fi
+        if [[ "$RUN_S6" == "y" ]]; then
+            start_stage_command_capture "$STAGE6" "Stage6_LDPruning"
+            run_stage6_ld_pruning_sites
+        fi
+        if [[ "$RUN_S7" == "y" ]]; then
+            start_stage_command_capture "$STAGE7" "Stage7_FinalSNP"
+            run_stage7_final_snp
+        fi
+        if [[ "$RUN_S8" == "y" ]]; then
+            start_stage_command_capture "$STAGE8" "Stage8_Structure"
+            run_stage8_structure_auto
+        fi
+        if [[ "$RUN_S9" == "y" ]]; then
+            start_stage_command_capture "$STAGE9" "Stage9_Divergence"
+            run_stage9_genetic_divergence
+        fi
+
+        echo "======================================================="
+        echo "分析結束: $(date)"
+        [[ "$RUN_S7" == "y" ]] && [[ "$RUN_S7_WITH_LD" == "y" ]] && echo "產出 VCF(with LD pruning): $STAGE7/LD_Pruned/${PROJECT_NAME}_snps_final_with_LD_Pruning.vcf"
+        [[ "$RUN_S7" == "y" ]] && [[ "$RUN_S7_SKIP_LD" == "y" ]] && echo "產出 VCF(skip LD pruning): $STAGE7/Skip_LD_Pruning/${PROJECT_NAME}_snps_final_Skip_LD_Pruning.vcf"
+        [[ "$RUN_S9" == "y" ]] && echo "Stage9 輸出資料夾: $STAGE9_LAST_RUN_DIR"
+        echo "日誌位置: $LOG_FILE"
+        echo "VCF可用PGDSpider做轉換"
+        echo "https://software.bioinformatics.unibe.ch/pgdspider/"
+        echo "此分析參考 James Fifer https://github.com/jamesfifer/JapanRE"
+        echo "======================================================="
+        break
+    done
 }
 
 main "$@"
