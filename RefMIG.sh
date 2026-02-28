@@ -29,7 +29,7 @@ PROJECT_CONTEXT_FILE="PROJECT_CONTEXT.txt"
 LEGACY_PROJECT_NAME_FILE=".project_name"
 APP_VERSION="v3.0.1"
 APP_UPDATED_AT="2026-02-25"
-SELF_UPDATE_BRANCH="beta"
+SELF_UPDATE_BRANCH="main"
 SELF_UPDATE_REPO_RAW="https://raw.githubusercontent.com/SavannaChow/migseq-snpcalling/${SELF_UPDATE_BRANCH}/RefMIG.sh"
 SELF_UPDATE_TIMEOUT=5
 SELF_UPDATE_BYPASS_FILE=".update_check_bypass_until"
@@ -246,7 +246,7 @@ is_update_check_bypassed() {
 ##old code##
 
 self_update_check_and_apply() {
-    local script_path tmp_remote local_sha remote_sha backup_path resp
+    local script_path script_dir tmp_remote tmp_target local_sha remote_sha post_update_sha resp
     local install_cmd
 
     [ "${REFMIG_SKIP_UPDATE_CHECK:-0}" = "1" ] && {
@@ -260,6 +260,7 @@ self_update_check_and_apply() {
     script_path=$(realpath "${BASH_SOURCE[0]}" 2>/dev/null || true)
     [ -z "$script_path" ] && return 0
     [ ! -f "$script_path" ] && return 0
+    script_dir=$(dirname "$script_path")
 
     tmp_remote=$(mktemp)
     if ! download_url_to_file "$SELF_UPDATE_REPO_RAW" "$tmp_remote"; then
@@ -288,7 +289,6 @@ self_update_check_and_apply() {
     UPDATE_STATUS="是（可更新到 ${UPDATE_REMOTE_VERSION}）"
     echo "======================================================="
     echo "[發現新版本] RefMIG.sh 有可用更新"
-    echo "GitHub: https://github.com/SavannaChow/migseq-snpcalling/tree/${SELF_UPDATE_BRANCH}"
     echo "目前檔案: $script_path"
     read -p "是否立即下載並覆蓋目前腳本？(y/n) [y]: " resp
     resp=${resp:-y}
@@ -300,16 +300,24 @@ self_update_check_and_apply() {
         return 0
     fi
 
-    backup_path="${script_path}.bak.$(date +%Y%m%d_%H%M%S)"
-    cp "$script_path" "$backup_path" 2>/dev/null || true
-
-    if cp "$tmp_remote" "$script_path" 2>/dev/null && chmod +x "$script_path" 2>/dev/null; then
+    tmp_target=$(mktemp "${script_dir}/.RefMIG.sh.update.XXXXXX" 2>/dev/null || true)
+    if [ -n "$tmp_target" ] \
+        && cp "$tmp_remote" "$tmp_target" 2>/dev/null \
+        && chmod +x "$tmp_target" 2>/dev/null \
+        && mv -f "$tmp_target" "$script_path" 2>/dev/null; then
+        post_update_sha=$(sha256_file "$script_path")
+        if [ -n "$post_update_sha" ] && [ "$post_update_sha" = "$remote_sha" ]; then
+            rm -f "$tmp_remote"
+            echo "更新完成。"
+            echo "請重新執行腳本以使用新版本。"
+            exit 0
+        fi
+        rm -f "$tmp_target" 2>/dev/null || true
         rm -f "$tmp_remote"
-        echo "更新完成：$script_path"
-        [ -f "$backup_path" ] && echo "備份檔案：$backup_path"
-        echo "請重新執行腳本以使用新版本。"
-        exit 0
+        echo "更新未完成，請稍後再試。"
+        return 0
     fi
+    rm -f "$tmp_target" 2>/dev/null || true
 
     printf -v install_cmd 'sudo install -m 755 %q %q' "$tmp_remote" "$script_path"
     echo "更新檔已下載但目前檔案無寫入權限。"
@@ -326,7 +334,6 @@ print_version_info() {
     echo "  更新日期      : $APP_UPDATED_AT"
     echo "  目前版本      : $APP_VERSION"
     echo "  是否有新版本  : $UPDATE_STATUS"
-    echo "  更新來源分支  : $SELF_UPDATE_BRANCH"
     [ "$UPDATE_REMOTE_VERSION" != "unknown" ] && echo "  遠端版本      : $UPDATE_REMOTE_VERSION"
     echo "-------------------------------------------------------"
 }
