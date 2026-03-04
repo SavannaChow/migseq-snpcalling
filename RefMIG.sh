@@ -597,6 +597,50 @@ fastq_r1_to_r2() {
     printf "%s/%s\n" "$dir" "$mate"
 }
 
+validate_structured_sample_base() {
+    local sample_base="$1"
+    [[ "$sample_base" =~ ^[^_]+_[^_]+_[^_]+$ ]]
+}
+
+sample_base_population_code() {
+    local sample_base="$1"
+    printf "%s\n" "${sample_base%%_*}"
+}
+
+validate_trimmed_fastq_name_or_die() {
+    local fq="$1"
+    local sample_base
+    sample_base=$(fastq_r1_to_base "$fq")
+    if ! validate_structured_sample_base "$sample_base"; then
+        echo "錯誤：檔名不符合規則 population_sampleId_species：$fq"
+        echo "例如：GG_I50_isopora_R1.fastq"
+        exit 1
+    fi
+}
+
+validate_bam_sample_name_or_die() {
+    local bam_path="$1"
+    local sample_base
+    sample_base=$(basename "$bam_path")
+    sample_base=${sample_base%.bam}
+    sample_base=${sample_base%.cram}
+    sample_base=${sample_base%.sam}
+    if ! validate_structured_sample_base "$sample_base"; then
+        echo "錯誤：樣本名稱不符合規則 population_sampleId_species：$bam_path"
+        echo "例如：GG_I50_isopora.bam"
+        exit 1
+    fi
+}
+
+validate_bamfile_contents_or_die() {
+    local bamfile="$1"
+    local bam_path
+    while IFS= read -r bam_path; do
+        [ -z "$bam_path" ] && continue
+        validate_bam_sample_name_or_die "$bam_path"
+    done < "$bamfile"
+}
+
 setup_output_dirs() {
     if [[ "$RUN_S1" == "y" ]]; then
         mkdir -p "$STAGE1/trim" "$STAGE1/fastp_report"
@@ -1331,9 +1375,28 @@ prepare_stage8_popinfo_str() {
     label_file="$output_dir/label.txt"
     withpopinfo_str="$output_dir/${input_base}_popinfo.str"
 
+    if ! awk 'NR>=2 && NF>=1 { if (split($1, a, "_") != 3) exit 1 }' "$input_str"; then
+        echo "錯誤：Stage8 .str 內的 sample id 不符合規則 population_sampleId_species。"
+        echo "請先確認上游 sample naming。"
+        STAGE8_POPINFO_ENABLED="n"
+        eval "$out_var=\"$input_str\""
+        return 1
+    fi
+
     {
         echo "sample_id,population,sample_name,population_name"
-        awk 'NR>=2 && NF>=2 {print $1 "," $2 "," $1 "," ""}' "$input_str"
+        awk '
+            NR>=2 && NF>=2 {
+                sample=$1
+                n=split(sample, parts, "_")
+                pop_code=parts[1]
+                if (!(pop_code in pop_num)) {
+                    pop_count++
+                    pop_num[pop_code]=pop_count
+                }
+                print sample "," pop_num[pop_code] "," sample "," pop_code
+            }
+        ' "$input_str"
     } > "$popinfo_csv"
 
     if [ ! -s "$popinfo_csv" ]; then
@@ -2397,6 +2460,7 @@ run_stage1_fastp() {
 
     while read -r r1; do
         [ -z "$r1" ] && continue
+        validate_trimmed_fastq_name_or_die "$r1"
         r2=$(fastq_r1_to_r2 "$r1")
         if [ ! -f "$r2" ]; then
             echo "$r1 -> 缺少配對檔案: $r2" >> "$missing_pairs_file"
@@ -2460,8 +2524,10 @@ run_stage2_alignment() {
     echo "執行 BWA Mapping..."
     while read -r r1; do
         [ -z "$r1" ] && continue
+        validate_trimmed_fastq_name_or_die "$r1"
         base=$(fastq_r1_to_base "$r1")
         r2=$(fastq_r1_to_r2 "$r1")
+        [ ! -f "$r2" ] && { echo "錯誤：找不到配對 trimmed fastq：$r2"; exit 1; }
         bwa mem -t "$THREADS" "$REF_GENOME" "$r1" "$r2" > "$STAGE2/bam/${base}.sam"
         samtools view -Sb "$STAGE2/bam/${base}.sam" > "$STAGE2/bam/${base}.bam"
         samtools view -bF4 -@ "$THREADS" "$STAGE2/bam/${base}.bam" > "$STAGE2/mapped_bam/${base}.bam"
@@ -3298,6 +3364,28 @@ run_stage9_genetic_divergence() {
     stage9_all_bam_abs="$stage9_dir/all_populations.bamfile"
     normalize_bamfile_to_absolute "$BAM_LIST_DIV_ALL_INPUT" "$stage9_all_bam_abs"
     stage9_all_bamfile="$stage9_all_bam_abs"
+    validate_bamfile_contents_or_die "$stage9_all_bamfile"
+
+    # 依據 bam basename 的第一段 population code，自動分組產生 population.bamfile
+    awk '
+        {
+            bam=$0
+            sample=bam
+            sub(/^.*\//, "", sample)
+            sub(/\.bam$/, "", sample)
+            split(sample, a, "_")
+            pop=a[1]
+            if (pop == "") next
+            file="'"$stage9_pop_dir"'/" pop ".bamfile"
+            if (!(pop in seen)) {
+                print bam > file
+                seen[pop]=1
+            } else {
+                print bam >> file
+            }
+            close(file)
+        }
+    ' "$stage9_all_bamfile"
 
     pop_files=()
     while IFS= read -r f; do
