@@ -580,6 +580,23 @@ build_mapping_summary_csv() {
     done
 }
 
+fastq_r1_to_base() {
+    local fq="$1"
+    local name
+    name=$(basename "$fq")
+    name=$(echo "$name" | sed 's/_R1\.fastq\.gz$//; s/_R1\.fastq$//; s/_R1\.fq\.gz$//; s/_R1\.fq$//')
+    printf "%s\n" "$name"
+}
+
+fastq_r1_to_r2() {
+    local fq="$1"
+    local dir name mate
+    dir=$(dirname "$fq")
+    name=$(basename "$fq")
+    mate=$(echo "$name" | sed 's/_R1\.fastq\.gz$/_R2.fastq.gz/; s/_R1\.fastq$/_R2.fastq/; s/_R1\.fq\.gz$/_R2.fq.gz/; s/_R1\.fq$/_R2.fq/')
+    printf "%s/%s\n" "$dir" "$mate"
+}
+
 setup_output_dirs() {
     if [[ "$RUN_S1" == "y" ]]; then
         mkdir -p "$STAGE1/trim" "$STAGE1/fastp_report"
@@ -1777,7 +1794,7 @@ print_runtime_config() {
 print_command_preview() {
     echo ""
     echo "  指令預覽（核心命令）:"
-    [[ "$RUN_S1" == "y" ]] && echo "    [S1] parallel ... fastp -i <R1> -I <R2> -o $STAGE1/trim/<sample>_R1_001.fastq.gz -O $STAGE1/trim/<sample>_R2_001.fastq.gz ..."
+    [[ "$RUN_S1" == "y" ]] && echo "    [S1] parallel ... fastp -i <population_sample_species_R1.fastq> -I <population_sample_species_R2.fastq> -o $STAGE1/trim/<sample>_R1.fastq.gz -O $STAGE1/trim/<sample>_R2.fastq.gz ..."
     [[ "$RUN_S2" == "y" ]] && echo "    [S2] bwa mem -t $THREADS \"$REF_GENOME\" <R1.fastq.gz> <R2.fastq.gz> | samtools view/sort/index ; samtools flagstat > $STAGE2/mapping_results/<sample>.txt"
     [[ "$RUN_S3" == "y" ]] && echo "    [S3] cp $STAGE2/${PROJECT_NAME}_mapping_summary.csv $STAGE3/${PROJECT_NAME}_mapping_summary.csv ; Rscript $STAGE3/${PROJECT_NAME}_PCA.r"
     [[ "$RUN_S4" == "y" ]] && echo "    [S4] angsd -bam <clone_bamfile> ... -doIBS 1 -doGeno 32 ... -out $STAGE4/${PROJECT_NAME}_clone_identification ; Rscript $STAGE4/${PROJECT_NAME}_identify_clones.r"
@@ -2367,24 +2384,40 @@ run_stage1_fastp() {
     fi
 
     echo "執行 Fastp (增量模式：只處理新增樣本)..."
-    local raw_list_all raw_list_todo n_all n_done n_todo
+    local raw_list_all raw_list_todo missing_pairs_file n_all n_done n_todo
+    local r1 base out_r1 out_r2 r2
     raw_list_all="$STAGE1/raw_list_all.txt"
     raw_list_todo="$STAGE1/raw_list_todo.txt"
+    missing_pairs_file="$STAGE1/missing_pairs.txt"
     : > "$raw_list_all"
     : > "$raw_list_todo"
+    : > "$missing_pairs_file"
 
-    ls "${RAW_PATH}"/*_R1_001.fast* > "$raw_list_all"
+    find "$RAW_PATH" -maxdepth 1 -type f \( -name "*_R1.fastq" -o -name "*_R1.fastq.gz" -o -name "*_R1.fq" -o -name "*_R1.fq.gz" \) | sort > "$raw_list_all"
 
     while read -r r1; do
-        base=$(basename "$r1" | sed 's/_R1_001\.fastq\.gz$//; s/_R1_001\.fastq$//; s/_R1_001\.fq\.gz$//; s/_R1_001\.fq$//')
-        out_r1="$STAGE1/trim/${base}_R1_001.fastq.gz"
-        out_r2="$STAGE1/trim/${base}_R2_001.fastq.gz"
+        [ -z "$r1" ] && continue
+        r2=$(fastq_r1_to_r2 "$r1")
+        if [ ! -f "$r2" ]; then
+            echo "$r1 -> 缺少配對檔案: $r2" >> "$missing_pairs_file"
+            continue
+        fi
+        base=$(fastq_r1_to_base "$r1")
+        out_r1="$STAGE1/trim/${base}_R1.fastq.gz"
+        out_r2="$STAGE1/trim/${base}_R2.fastq.gz"
 
         # 已有完整 trim 輸出就跳過；缺任何一個則視為待處理
         if [[ ! -s "$out_r1" || ! -s "$out_r2" ]]; then
             echo "$r1" >> "$raw_list_todo"
         fi
     done < "$raw_list_all"
+
+    if [ -s "$missing_pairs_file" ]; then
+        echo "錯誤：偵測到以下 R1 缺少對應的 R2 檔案："
+        cat "$missing_pairs_file"
+        echo "請先補齊配對檔案後再執行 Stage1。"
+        exit 1
+    fi
 
     n_all=$(wc -l < "$raw_list_all")
     n_todo=$(wc -l < "$raw_list_todo")
@@ -2401,10 +2434,9 @@ run_stage1_fastp() {
 
     parallel -j "$JOBS" --bar "
       r1=\"{}\"
-      r2=\$(echo \"\$r1\" | sed 's/_R1_/_R2_/')
-      ext=\$(basename \"\$r1\" | sed 's/.*_R1_001//')
-      base=\$(basename \"\$r1\" _R1_001\$ext)
-      fastp -i \"\$r1\" -I \"\$r2\" -o \"$STAGE1/trim/\${base}_R1_001.fastq.gz\" -O \"$STAGE1/trim/\${base}_R2_001.fastq.gz\" \
+      r2=\$(printf \"%s\n\" \"\$r1\" | sed 's/_R1\.fastq\.gz$/_R2.fastq.gz/; s/_R1\.fastq$/_R2.fastq/; s/_R1\.fq\.gz$/_R2.fq.gz/; s/_R1\.fq$/_R2.fq/')
+      base=\$(basename \"\$r1\" | sed 's/_R1\.fastq\.gz$//; s/_R1\.fastq$//; s/_R1\.fq\.gz$//; s/_R1\.fq$//')
+      fastp -i \"\$r1\" -I \"\$r2\" -o \"$STAGE1/trim/\${base}_R1.fastq.gz\" -O \"$STAGE1/trim/\${base}_R2.fastq.gz\" \
         --thread 2 --qualified_quality_phred 30 --length_required 80 \
         --html \"$STAGE1/fastp_report/\${base}.html\" --json \"$STAGE1/fastp_report/\${base}.json\"
     " < "$raw_list_todo"
@@ -2427,8 +2459,9 @@ run_stage2_alignment() {
 
     echo "執行 BWA Mapping..."
     while read -r r1; do
-        base=$(basename "$r1" _R1_001.fastq.gz)
-        r2="$(dirname "$r1")/${base}_R2_001.fastq.gz"
+        [ -z "$r1" ] && continue
+        base=$(fastq_r1_to_base "$r1")
+        r2=$(fastq_r1_to_r2 "$r1")
         bwa mem -t "$THREADS" "$REF_GENOME" "$r1" "$r2" > "$STAGE2/bam/${base}.sam"
         samtools view -Sb "$STAGE2/bam/${base}.sam" > "$STAGE2/bam/${base}.bam"
         samtools view -bF4 -@ "$THREADS" "$STAGE2/bam/${base}.bam" > "$STAGE2/mapped_bam/${base}.bam"
@@ -2437,7 +2470,7 @@ run_stage2_alignment() {
         samtools index "$STAGE2/mapped_bam/${base}.bam"
         samtools flagstat "$STAGE2/bam/${base}.bam" > "$STAGE2/mapping_results/${base}.txt"
         rm "$STAGE2/bam/${base}.sam"
-    done < <(ls "$TRIM_INPUT_DIR"/*_R1_001.fastq.gz)
+    done < <(find "$TRIM_INPUT_DIR" -maxdepth 1 -type f -name "*_R1.fastq.gz" | sort)
 
     # 固定輸出下游 Stage 3/4/5/6 會使用的核心 bam list 介面
     ls -d "$(realpath "$STAGE2/mapped_bam")"/*.bam > "$STAGE2/${PROJECT_NAME}_bwa_mapped.bamfile"
