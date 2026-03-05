@@ -402,6 +402,9 @@ BAM_LIST_DIV_ALL_INPUT=""
 STAGE9_LAST_RUN_DIR=""
 S9_RUN_STATS2="n"
 STAGE8_POPINFO_ENABLED="n"
+USER_SELECTED_BAM_STAGE5="n"
+USER_SELECTED_BAM_STAGE6="n"
+USER_SELECTED_BAM_STAGE7="n"
 S6_MAX_KB_DIST="50"
 CURRENT_STAGE_DIR=""
 CURRENT_STAGE_CMD_FILE=""
@@ -438,6 +441,9 @@ reset_runtime_state() {
     STAGE9_LAST_RUN_DIR=""
     S9_RUN_STATS2="n"
     STAGE8_POPINFO_ENABLED="n"
+    USER_SELECTED_BAM_STAGE5="n"
+    USER_SELECTED_BAM_STAGE6="n"
+    USER_SELECTED_BAM_STAGE7="n"
     S6_MAX_KB_DIST="50"
 }
 
@@ -2330,11 +2336,13 @@ collect_inputs() {
 
     if [[ "$RUN_S5" == "y" && "$RUN_S4" != "y" && "$RUN_S3" != "y" && "$RUN_S2" != "y" ]]; then
         select_bamfile_input "請選擇 Stage5 All SNP sites 要使用的 BAM list (.bamfile)" BAM_LIST_LD_INPUT || return $?
+        USER_SELECTED_BAM_STAGE5="y"
     fi
 
     if [[ "$RUN_S6" == "y" ]]; then
         if [[ "$RUN_S5" != "y" && "$RUN_S4" != "y" && "$RUN_S3" != "y" && "$RUN_S2" != "y" ]]; then
             select_bamfile_input "請選擇 Stage6 LD pruning 要使用的 BAM list (.bamfile)" BAM_LIST_FINAL_INPUT || return $?
+            USER_SELECTED_BAM_STAGE6="y"
         fi
         if [[ "$RUN_S5" != "y" ]]; then
             select_ld_sites_input "請選擇 Stage6 要使用的 All SNP sites 檔案" ALL_SITES_INPUT || return $?
@@ -2347,6 +2355,7 @@ collect_inputs() {
 
     if [[ "$RUN_S7" == "y" && "$RUN_S6" != "y" && "$RUN_S5" != "y" && "$RUN_S4" != "y" && "$RUN_S3" != "y" && "$RUN_S2" != "y" ]]; then
         select_bamfile_input "請選擇 Stage7 Final SNP 要使用的 BAM list (.bamfile)" BAM_LIST_FINAL_INPUT || return $?
+        USER_SELECTED_BAM_STAGE7="y"
     fi
 
     if [[ "$RUN_S7" == "y" ]]; then
@@ -2394,6 +2403,32 @@ collect_inputs() {
 confirm_run() {
     clear
     [[ "$RUN_MODE" == "1" ]] && MODE_STR="自動模式 (Auto)" || MODE_STR="互動模式 (Manual)"
+    local bam_source_s5 bam_source_s6 bam_source_s7
+    bam_source_s5=""
+    bam_source_s6=""
+    bam_source_s7=""
+
+    if [[ "$RUN_S5" == "y" ]]; then
+        if [[ "$RUN_S6" != "y" && "$RUN_S7" != "y" && "$USER_SELECTED_BAM_STAGE5" == "y" && -s "$BAM_LIST_LD_INPUT" ]]; then
+            bam_source_s5="手動指定: $BAM_LIST_LD_INPUT"
+        else
+            bam_source_s5="自動依存/推導: $BAM_LIST"
+        fi
+    fi
+    if [[ "$RUN_S6" == "y" ]]; then
+        if [[ "$RUN_S5" != "y" && "$RUN_S7" != "y" && "$USER_SELECTED_BAM_STAGE6" == "y" && -s "$BAM_LIST_FINAL_INPUT" ]]; then
+            bam_source_s6="手動指定: $BAM_LIST_FINAL_INPUT"
+        else
+            bam_source_s6="自動依存/推導: $BAM_LIST"
+        fi
+    fi
+    if [[ "$RUN_S7" == "y" ]]; then
+        if [[ "$RUN_S5" != "y" && "$RUN_S6" != "y" && "$USER_SELECTED_BAM_STAGE7" == "y" && -s "$BAM_LIST_FINAL_INPUT" ]]; then
+            bam_source_s7="手動指定: $BAM_LIST_FINAL_INPUT"
+        else
+            bam_source_s7="自動依存/推導: $BAM_LIST"
+        fi
+    fi
 
     echo "                      執行前最終確認"
     echo ""
@@ -2421,6 +2456,9 @@ confirm_run() {
     [[ "$RUN_S9" == "y" ]] && echo "    - Stage 9 Analysis of Genetic Divergence"
     [[ "$RUN_S7" == "y" ]] && printf "  %-15s : %s\n" "Stage7 做LD pruning" "$RUN_S7_WITH_LD"
     [[ "$RUN_S7" == "y" ]] && printf "  %-15s : %s\n" "Stage7 跳過LD pruning" "$RUN_S7_SKIP_LD"
+    [[ "$RUN_S5" == "y" ]] && printf "  %-15s : %s\n" "Stage5 BAM來源" "$bam_source_s5"
+    [[ "$RUN_S6" == "y" ]] && printf "  %-15s : %s\n" "Stage6 BAM來源" "$bam_source_s6"
+    [[ "$RUN_S7" == "y" ]] && printf "  %-15s : %s\n" "Stage7 BAM來源" "$bam_source_s7"
     [[ "$RUN_S9" == "y" ]] && printf "  %-15s : %s\n" "Stage9 全族群BAM" "$BAM_LIST_DIV_ALL_INPUT"
     [[ "$RUN_S9" == "y" ]] && printf "  %-15s : %s\n" "Stage9 跑stats2" "$S9_RUN_STATS2"
 
@@ -3025,7 +3063,13 @@ resolve_bam_list_for_stage5_to_7() {
 #        fi
 #    fi
 ##old code##
-    if [ -n "$BAM_LIST" ] && [ -s "$BAM_LIST" ]; then
+    if [[ "$RUN_S5" == "y" && "$RUN_S6" != "y" && "$RUN_S7" != "y" && "$USER_SELECTED_BAM_STAGE5" == "y" && -s "$BAM_LIST_LD_INPUT" ]]; then
+        BAM_LIST="$BAM_LIST_LD_INPUT"
+    elif [[ "$RUN_S6" == "y" && "$RUN_S5" != "y" && "$RUN_S7" != "y" && "$USER_SELECTED_BAM_STAGE6" == "y" && -s "$BAM_LIST_FINAL_INPUT" ]]; then
+        BAM_LIST="$BAM_LIST_FINAL_INPUT"
+    elif [[ "$RUN_S7" == "y" && "$RUN_S5" != "y" && "$RUN_S6" != "y" && "$USER_SELECTED_BAM_STAGE7" == "y" && -s "$BAM_LIST_FINAL_INPUT" ]]; then
+        BAM_LIST="$BAM_LIST_FINAL_INPUT"
+    elif [ -n "$BAM_LIST" ] && [ -s "$BAM_LIST" ]; then
         :
     elif [ -s "$STAGE4/${PROJECT_NAME}_after_clones.bamfile" ]; then
         BAM_LIST="$STAGE4/${PROJECT_NAME}_after_clones.bamfile"
@@ -3280,9 +3324,13 @@ run_stage7_final_snp() {
     local ld_sites_local
     local stage7_ld_dir stage7_skip_dir
     local original_bam_list
+    local standalone_stage7_only=false
     stage7_ld_dir="$STAGE7/LD_Pruned"
     stage7_skip_dir="$STAGE7/Skip_LD_Pruning"
     original_bam_list="$BAM_LIST"
+    if [[ "$RUN_S7" == "y" && "$RUN_S1" != "y" && "$RUN_S2" != "y" && "$RUN_S3" != "y" && "$RUN_S4" != "y" && "$RUN_S5" != "y" && "$RUN_S6" != "y" && "$RUN_S8" != "y" && "$RUN_S9" != "y" ]]; then
+        standalone_stage7_only=true
+    fi
 
     ask_to_run "Stage7 Final SNP Calling" "$stage7_ld_dir/${PROJECT_NAME}_snps_final_with_LD_Pruning.vcf" SKIP_S7
     if [[ "$SKIP_S7" == true ]]; then
@@ -3291,7 +3339,9 @@ run_stage7_final_snp() {
 
     if [[ "$RUN_S7_WITH_LD" == "y" ]]; then
         mkdir -p "$stage7_ld_dir"
-        if [ -s "$STAGE4/${PROJECT_NAME}_after_clones.bamfile" ]; then
+        if [[ "$standalone_stage7_only" == true && "$USER_SELECTED_BAM_STAGE7" == "y" && -s "$BAM_LIST_FINAL_INPUT" ]]; then
+            BAM_LIST="$BAM_LIST_FINAL_INPUT"
+        elif [ -s "$STAGE4/${PROJECT_NAME}_after_clones.bamfile" ]; then
             BAM_LIST="$STAGE4/${PROJECT_NAME}_after_clones.bamfile"
         fi
         if [ ! -s "$BAM_LIST" ]; then
