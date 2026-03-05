@@ -322,7 +322,14 @@ self_update_check_and_apply() {
 
     printf -v install_cmd 'sudo install -m 755 %q %q' "$tmp_remote" "$script_path"
     echo "更新檔已下載但目前檔案無寫入權限。"
-    echo "請手動執行："
+    if sudo install -m 755 "$tmp_remote" "$script_path"; then
+        echo "更新完成。"
+        echo "請重新執行腳本以使用新版本。"
+        rm -f "$tmp_remote"
+        exit 0
+    fi
+    echo "sudo 更新失敗。"
+    echo "可手動執行："
     echo "$install_cmd"
     echo "（完成後可重新執行本腳本）"
     rm -f "$tmp_remote"
