@@ -611,10 +611,46 @@ prompt_stage2_reference_mode() {
                 ;;
             2)
                 while true; do
-                    read -e -p "請輸入 Stage2 臨時 reference 的絕對路徑 (b 返回): " tmp_ref
+                    local MANUAL_OPTION
+                    source "$CONF_FILE"
+                    MAPFILE=()
+                    MAPVAL=()
+
+                    while IFS='=' read -r name value; do
+                        if [[ "$value" =~ \.(fa|fasta|fna)$ ]]; then
+                            MAPFILE+=("$name")
+                            MAPVAL+=("$value")
+                        fi
+                    done < <(env)
+
+                    echo ""
+                    echo "--- Stage2 可用的臨時參考基因組 ---"
+                    for i in "${!MAPFILE[@]}"; do
+                        echo "$((i+1))) \$${MAPFILE[$i]} (${MAPVAL[$i]})"
+                    done
+                    MANUAL_OPTION=$(( ${#MAPFILE[@]} + 1 ))
+                    echo "------------------------"
+                    echo "$MANUAL_OPTION) 手動輸入絕對路徑"
+                    echo "b) 返回上一層"
+                    echo "------------------------"
+                    read -p "請選擇參考基因組 (1-$MANUAL_OPTION, 或 b): " tmp_ref
+
                     if [[ "$tmp_ref" == "b" || "$tmp_ref" == "B" ]]; then
                         break
                     fi
+
+                    if [[ "$tmp_ref" =~ ^[0-9]+$ ]] && [ "$tmp_ref" -ge 1 ] && [ "$tmp_ref" -le "${#MAPFILE[@]}" ]; then
+                        tmp_ref="${MAPVAL[$((tmp_ref-1))]}"
+                    elif [[ "$tmp_ref" == "$MANUAL_OPTION" ]]; then
+                        read -e -p "請輸入 Stage2 臨時 reference 的絕對路徑 (b 返回): " tmp_ref
+                        if [[ "$tmp_ref" == "b" || "$tmp_ref" == "B" ]]; then
+                            continue
+                        fi
+                    else
+                        echo "錯誤：無效選項。"
+                        continue
+                    fi
+
                     tmp_ref=$(echo "$tmp_ref" | sed "s/['\"]//g")
                     if [ -z "$tmp_ref" ] || [ ! -f "$tmp_ref" ]; then
                         echo "錯誤：檔案不存在：$tmp_ref"
