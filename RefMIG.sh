@@ -392,6 +392,12 @@ PROJECT_NAME=""
 BASE_PROJECT_NAME=""
 RAW_PATH=""
 REF_GENOME=""
+REF_GENOME_PROJECT=""
+REF_GENOME_STAGE2_OVERRIDE=""
+STAGE2_USE_REF_OVERRIDE="n"
+STAGE2_REF_TAG=""
+STAGE2_BAM_LIST_CURRENT=""
+STAGE2_MAPPING_SUMMARY_CURRENT=""
 BAM_LIST=""
 TRIM_INPUT_DIR=""
 LD_SITES_INPUT=""
@@ -431,6 +437,12 @@ reset_runtime_state() {
     RUN_SCOPE_LABEL=""
     RAW_PATH=""
     REF_GENOME=""
+    REF_GENOME_PROJECT=""
+    REF_GENOME_STAGE2_OVERRIDE=""
+    STAGE2_USE_REF_OVERRIDE="n"
+    STAGE2_REF_TAG=""
+    STAGE2_BAM_LIST_CURRENT=""
+    STAGE2_MAPPING_SUMMARY_CURRENT=""
     BAM_LIST=""
     TRIM_INPUT_DIR=""
     LD_SITES_INPUT=""
@@ -557,6 +569,86 @@ prompt_stage6_max_kb_dist() {
         fi
         echo "錯誤：請輸入 >=1 的整數。"
     done
+}
+
+make_ref_tag() {
+    local ref_path="$1"
+    local base hash_cmd hash_val
+    base=$(basename "$ref_path")
+    base=$(echo "$base" | sed 's/\.[^.]*$//')
+    base=$(echo "$base" | sed 's/[^A-Za-z0-9._-]/_/g')
+    if command -v sha256sum >/dev/null 2>&1; then
+        hash_cmd="sha256sum"
+        hash_val=$(printf "%s" "$ref_path" | sha256sum | awk '{print $1}')
+    else
+        hash_cmd="shasum"
+        hash_val=$(printf "%s" "$ref_path" | shasum -a 256 | awk '{print $1}')
+    fi
+    [ -z "$hash_val" ] && hash_val=$(printf "%s" "$ref_path" | cksum | awk '{print $1}')
+    printf "%s_%s\n" "$base" "${hash_val:0:8}"
+}
+
+prompt_stage2_reference_mode() {
+    local choice tmp_ref
+    STAGE2_USE_REF_OVERRIDE="n"
+    REF_GENOME_STAGE2_OVERRIDE=""
+    STAGE2_REF_TAG=""
+    REF_GENOME_PROJECT="$REF_GENOME"
+
+    while true; do
+        echo "-------------------------------------------------------"
+        echo "Stage2 參考基因組模式："
+        echo "1) 使用目前專案設定（預設，不改 PROJECT_CONTEXT）"
+        echo "2) 本次僅 Stage2 暫時改用其他 reference（不改 PROJECT_CONTEXT）"
+        echo "q) 返回主選單"
+        read -p "請選擇 (1/2/q) [1]: " choice
+        [ -z "$choice" ] && choice="1"
+
+        case "$choice" in
+            1)
+                STAGE2_USE_REF_OVERRIDE="n"
+                break
+                ;;
+            2)
+                while true; do
+                    read -e -p "請輸入 Stage2 臨時 reference 的絕對路徑 (b 返回): " tmp_ref
+                    if [[ "$tmp_ref" == "b" || "$tmp_ref" == "B" ]]; then
+                        break
+                    fi
+                    tmp_ref=$(echo "$tmp_ref" | sed "s/['\"]//g")
+                    if [ -z "$tmp_ref" ] || [ ! -f "$tmp_ref" ]; then
+                        echo "錯誤：檔案不存在：$tmp_ref"
+                        continue
+                    fi
+                    if [ ! -f "${tmp_ref}.bwt" ]; then
+                        echo "建立 BWA index..."
+                        bwa index "$tmp_ref" || { echo "BWA index 失敗"; exit 1; }
+                    fi
+                    if [ ! -f "${tmp_ref}.fai" ]; then
+                        echo "建立 Samtools index..."
+                        samtools faidx "$tmp_ref" || { echo "Samtools faidx 失敗"; exit 1; }
+                    fi
+                    REF_GENOME_STAGE2_OVERRIDE="$tmp_ref"
+                    STAGE2_USE_REF_OVERRIDE="y"
+                    STAGE2_REF_TAG=$(make_ref_tag "$tmp_ref")
+                    REF_GENOME="$tmp_ref"
+                    break
+                done
+                if [[ "$STAGE2_USE_REF_OVERRIDE" == "y" ]]; then
+                    break
+                fi
+                ;;
+            q|Q)
+                return_to_main_menu
+                return $?
+                ;;
+            *)
+                echo "錯誤：無效選項。"
+                ;;
+        esac
+    done
+
+    return 0
 }
 
 build_mapping_summary_csv() {
@@ -2322,6 +2414,10 @@ collect_inputs() {
         select_ref_genome || return $?
     fi
 
+    if [[ "$RUN_S2" == "y" ]]; then
+        prompt_stage2_reference_mode || return $?
+    fi
+
     if [[ "$RUN_S3" == "y" ]]; then
         :
     fi
@@ -2561,17 +2657,29 @@ run_stage1_fastp() {
 }
 
 run_stage2_alignment() {
-    ask_to_run "BWA Alignment" "$STAGE2/mapped_bam" SKIP_BWA
+    local stage2_run_dir stage2_ref_in_use
+    stage2_run_dir="$STAGE2"
+    stage2_ref_in_use="$REF_GENOME"
+    if [[ "$STAGE2_USE_REF_OVERRIDE" == "y" && -n "$STAGE2_REF_TAG" ]]; then
+        stage2_run_dir="$STAGE2/by_ref/$STAGE2_REF_TAG"
+        stage2_ref_in_use="$REF_GENOME_STAGE2_OVERRIDE"
+    fi
+
+    mkdir -p "$stage2_run_dir/bam" "$stage2_run_dir/mapped_bam" "$stage2_run_dir/mapping_results"
+    ask_to_run "BWA Alignment" "$stage2_run_dir/mapped_bam" SKIP_BWA
     if [[ "$SKIP_BWA" == true ]]; then
+        STAGE2_BAM_LIST_CURRENT="$stage2_run_dir/${PROJECT_NAME}_bwa_mapped.bamfile"
+        STAGE2_MAPPING_SUMMARY_CURRENT="$stage2_run_dir/${PROJECT_NAME}_mapping_summary.csv"
+        [ -s "$STAGE2_BAM_LIST_CURRENT" ] && BAM_LIST="$STAGE2_BAM_LIST_CURRENT"
         return
     fi
 
     echo "執行 BWA Mapping (增量模式：只處理新增樣本)..."
     local trim_list_all trim_list_todo missing_pairs_file n_all n_done n_todo
     local r1 base r2 out_bam out_bai out_flagstat
-    trim_list_all="$STAGE2/trim_list_all.txt"
-    trim_list_todo="$STAGE2/trim_list_todo.txt"
-    missing_pairs_file="$STAGE2/missing_pairs.txt"
+    trim_list_all="$stage2_run_dir/trim_list_all.txt"
+    trim_list_todo="$stage2_run_dir/trim_list_todo.txt"
+    missing_pairs_file="$stage2_run_dir/missing_pairs.txt"
     : > "$trim_list_all"
     : > "$trim_list_todo"
     : > "$missing_pairs_file"
@@ -2587,9 +2695,9 @@ run_stage2_alignment() {
             echo "$r1 -> 缺少配對檔案: $r2" >> "$missing_pairs_file"
             continue
         fi
-        out_bam="$STAGE2/mapped_bam/${base}.bam"
-        out_bai="$STAGE2/mapped_bam/${base}.bam.bai"
-        out_flagstat="$STAGE2/mapping_results/${base}.txt"
+        out_bam="$stage2_run_dir/mapped_bam/${base}.bam"
+        out_bai="$stage2_run_dir/mapped_bam/${base}.bam.bai"
+        out_flagstat="$stage2_run_dir/mapping_results/${base}.txt"
 
         # 已有完整 alignment 輸出就跳過；缺任一輸出則重跑該樣本
         if [[ ! -s "$out_bam" || ! -s "$out_bai" || ! -s "$out_flagstat" ]]; then
@@ -2622,55 +2730,63 @@ run_stage2_alignment() {
         base=$(fastq_r1_to_base "$r1")
         r2=$(fastq_r1_to_r2 "$r1")
         [ ! -f "$r2" ] && { echo "錯誤：找不到配對 trimmed fastq：$r2"; exit 1; }
-        bwa mem -t "$THREADS" "$REF_GENOME" "$r1" "$r2" > "$STAGE2/bam/${base}.sam"
-        samtools view -Sb "$STAGE2/bam/${base}.sam" > "$STAGE2/bam/${base}.bam"
-        samtools view -bF4 -@ "$THREADS" "$STAGE2/bam/${base}.bam" > "$STAGE2/mapped_bam/${base}.bam"
-        samtools sort -@ "$THREADS" -o "$STAGE2/mapped_bam/${base}_sorted.bam" "$STAGE2/mapped_bam/${base}.bam"
-        mv "$STAGE2/mapped_bam/${base}_sorted.bam" "$STAGE2/mapped_bam/${base}.bam"
-        samtools index "$STAGE2/mapped_bam/${base}.bam"
-        samtools flagstat "$STAGE2/bam/${base}.bam" > "$STAGE2/mapping_results/${base}.txt"
-        rm "$STAGE2/bam/${base}.sam"
+        bwa mem -t "$THREADS" "$stage2_ref_in_use" "$r1" "$r2" > "$stage2_run_dir/bam/${base}.sam"
+        samtools view -Sb "$stage2_run_dir/bam/${base}.sam" > "$stage2_run_dir/bam/${base}.bam"
+        samtools view -bF4 -@ "$THREADS" "$stage2_run_dir/bam/${base}.bam" > "$stage2_run_dir/mapped_bam/${base}.bam"
+        samtools sort -@ "$THREADS" -o "$stage2_run_dir/mapped_bam/${base}_sorted.bam" "$stage2_run_dir/mapped_bam/${base}.bam"
+        mv "$stage2_run_dir/mapped_bam/${base}_sorted.bam" "$stage2_run_dir/mapped_bam/${base}.bam"
+        samtools index "$stage2_run_dir/mapped_bam/${base}.bam"
+        samtools flagstat "$stage2_run_dir/bam/${base}.bam" > "$stage2_run_dir/mapping_results/${base}.txt"
+        rm "$stage2_run_dir/bam/${base}.sam"
     done < "$trim_list_todo"
 
     # 固定輸出下游 Stage 3/4/5/6 會使用的核心 bam list 介面
-    find "$(realpath "$STAGE2/mapped_bam")" -maxdepth 1 -type f -name "*.bam" | sort > "$STAGE2/${PROJECT_NAME}_bwa_mapped.bamfile"
-    BAM_LIST="$STAGE2/${PROJECT_NAME}_bwa_mapped.bamfile"
+    STAGE2_BAM_LIST_CURRENT="$stage2_run_dir/${PROJECT_NAME}_bwa_mapped.bamfile"
+    find "$(realpath "$stage2_run_dir/mapped_bam")" -maxdepth 1 -type f -name "*.bam" | sort > "$STAGE2_BAM_LIST_CURRENT"
+    BAM_LIST="$STAGE2_BAM_LIST_CURRENT"
 
     # Stage2 固定輸出 mapping summary CSV，供 Stage3 直接複製使用
-    if ! build_mapping_summary_csv "$STAGE2/mapping_results" "$STAGE2/${PROJECT_NAME}_mapping_summary.csv"; then
+    STAGE2_MAPPING_SUMMARY_CURRENT="$stage2_run_dir/${PROJECT_NAME}_mapping_summary.csv"
+    if ! build_mapping_summary_csv "$stage2_run_dir/mapping_results" "$STAGE2_MAPPING_SUMMARY_CURRENT"; then
         echo "錯誤：Stage2 無法產生 mapping summary CSV。"
         exit 1
     fi
 
-    N_MAPPED=$(wc -l < "$STAGE2/${PROJECT_NAME}_bwa_mapped.bamfile")
+    N_MAPPED=$(wc -l < "$STAGE2_BAM_LIST_CURRENT")
     echo "-------------------------------------------------------"
     echo "[Stage 2 完成回報]"
-    echo "使用的參考基因組: $REF_GENOME"
+    echo "使用的參考基因組: $stage2_ref_in_use"
     echo "比對指令參數: bwa mem -t $THREADS"
     echo "完成步驟: SAM轉換、BAM過濾(F4)、排序與建立索引"
-    echo "產出的比對檔案(BAM): $STAGE2/mapped_bam/"
-    echo "比對率統計結果: $STAGE2/mapping_results/"
-    echo "Mapping Summary CSV: $STAGE2/${PROJECT_NAME}_mapping_summary.csv"
+    echo "產出的比對檔案(BAM): $stage2_run_dir/mapped_bam/"
+    echo "比對率統計結果: $stage2_run_dir/mapping_results/"
+    echo "Mapping Summary CSV: $STAGE2_MAPPING_SUMMARY_CURRENT"
+    echo "BAM List: $STAGE2_BAM_LIST_CURRENT"
     echo "本次新增比對樣本數: $n_todo"
     echo "累積完成比對樣本數: $N_MAPPED"
     echo "-------------------------------------------------------"
 }
 
 run_stage3_pca() {
-    local summary_csv summary_csv_stage2 bam_list_local
+    local summary_csv summary_csv_stage2 bam_list_local bam_list_stage2
     summary_csv_stage2="$STAGE2/${PROJECT_NAME}_mapping_summary.csv"
+    bam_list_stage2="$STAGE2/${PROJECT_NAME}_bwa_mapped.bamfile"
+    if [[ "$RUN_S2" == "y" && -s "$STAGE2_MAPPING_SUMMARY_CURRENT" && -s "$STAGE2_BAM_LIST_CURRENT" ]]; then
+        summary_csv_stage2="$STAGE2_MAPPING_SUMMARY_CURRENT"
+        bam_list_stage2="$STAGE2_BAM_LIST_CURRENT"
+    fi
     summary_csv="$STAGE3/${PROJECT_NAME}_mapping_summary.csv"
     bam_list_local="$STAGE3/${PROJECT_NAME}_bwa_mapped.bamfile"
 
     echo "[Stage 3] 生成比對報表與 PCA 品質檢測..."
 
     # Stage3 僅允許使用 Stage2 既有輸出，不再由 mapped_bam 重建 flagstat。
-    if [ ! -s "$STAGE2/${PROJECT_NAME}_bwa_mapped.bamfile" ]; then
-        echo "錯誤：Stage3 需要 Stage2 的 BAM list：$STAGE2/${PROJECT_NAME}_bwa_mapped.bamfile"
+    if [ ! -s "$bam_list_stage2" ]; then
+        echo "錯誤：Stage3 需要 Stage2 的 BAM list：$bam_list_stage2"
         echo "請先執行 Stage2，或確認 project name 與目錄是否一致。"
         exit 1
     fi
-    cp "$STAGE2/${PROJECT_NAME}_bwa_mapped.bamfile" "$bam_list_local"
+    cp "$bam_list_stage2" "$bam_list_local"
 
     if [ ! -s "$summary_csv_stage2" ]; then
         echo "錯誤：Stage3 需要 Stage2 的 mapping summary CSV：$summary_csv_stage2"
