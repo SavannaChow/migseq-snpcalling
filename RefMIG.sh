@@ -2566,7 +2566,56 @@ run_stage2_alignment() {
         return
     fi
 
-    echo "執行 BWA Mapping..."
+    echo "執行 BWA Mapping (增量模式：只處理新增樣本)..."
+    local trim_list_all trim_list_todo missing_pairs_file n_all n_done n_todo
+    local r1 base r2 out_bam out_bai out_flagstat
+    trim_list_all="$STAGE2/trim_list_all.txt"
+    trim_list_todo="$STAGE2/trim_list_todo.txt"
+    missing_pairs_file="$STAGE2/missing_pairs.txt"
+    : > "$trim_list_all"
+    : > "$trim_list_todo"
+    : > "$missing_pairs_file"
+
+    find "$TRIM_INPUT_DIR" -maxdepth 1 -type f \( -name "*_R1.fastq.gz" -o -name "*_R1.fastq" -o -name "*_R1.fq.gz" -o -name "*_R1.fq" \) | sort > "$trim_list_all"
+
+    while read -r r1; do
+        [ -z "$r1" ] && continue
+        validate_trimmed_fastq_name_or_die "$r1"
+        base=$(fastq_r1_to_base "$r1")
+        r2=$(fastq_r1_to_r2 "$r1")
+        if [ ! -f "$r2" ]; then
+            echo "$r1 -> 缺少配對檔案: $r2" >> "$missing_pairs_file"
+            continue
+        fi
+        out_bam="$STAGE2/mapped_bam/${base}.bam"
+        out_bai="$STAGE2/mapped_bam/${base}.bam.bai"
+        out_flagstat="$STAGE2/mapping_results/${base}.txt"
+
+        # 已有完整 alignment 輸出就跳過；缺任一輸出則重跑該樣本
+        if [[ ! -s "$out_bam" || ! -s "$out_bai" || ! -s "$out_flagstat" ]]; then
+            echo "$r1" >> "$trim_list_todo"
+        fi
+    done < "$trim_list_all"
+
+    if [ -s "$missing_pairs_file" ]; then
+        echo "錯誤：偵測到以下 R1 缺少對應的 R2 檔案："
+        cat "$missing_pairs_file"
+        echo "請先補齊配對檔案後再執行 Stage2。"
+        exit 1
+    fi
+
+    n_all=$(wc -l < "$trim_list_all")
+    n_todo=$(wc -l < "$trim_list_todo")
+    n_done=$((n_all - n_todo))
+
+    echo "Trimmed 樣本總數: $n_all"
+    echo "已完成 alignment 樣本數: $n_done"
+    echo "本次需新增 alignment 樣本數: $n_todo"
+
+    if [[ "$n_todo" -eq 0 ]]; then
+        echo "[Stage 2] 無新增樣本，略過 alignment；僅更新 BAM list 與 mapping summary。"
+    fi
+
     while read -r r1; do
         [ -z "$r1" ] && continue
         validate_trimmed_fastq_name_or_die "$r1"
@@ -2581,10 +2630,10 @@ run_stage2_alignment() {
         samtools index "$STAGE2/mapped_bam/${base}.bam"
         samtools flagstat "$STAGE2/bam/${base}.bam" > "$STAGE2/mapping_results/${base}.txt"
         rm "$STAGE2/bam/${base}.sam"
-    done < <(find "$TRIM_INPUT_DIR" -maxdepth 1 -type f -name "*_R1.fastq.gz" | sort)
+    done < "$trim_list_todo"
 
     # 固定輸出下游 Stage 3/4/5/6 會使用的核心 bam list 介面
-    ls -d "$(realpath "$STAGE2/mapped_bam")"/*.bam > "$STAGE2/${PROJECT_NAME}_bwa_mapped.bamfile"
+    find "$(realpath "$STAGE2/mapped_bam")" -maxdepth 1 -type f -name "*.bam" | sort > "$STAGE2/${PROJECT_NAME}_bwa_mapped.bamfile"
     BAM_LIST="$STAGE2/${PROJECT_NAME}_bwa_mapped.bamfile"
 
     # Stage2 固定輸出 mapping summary CSV，供 Stage3 直接複製使用
@@ -2593,7 +2642,7 @@ run_stage2_alignment() {
         exit 1
     fi
 
-    N_MAPPED=$(ls "$STAGE2/mapped_bam/"*.bam | wc -l)
+    N_MAPPED=$(wc -l < "$STAGE2/${PROJECT_NAME}_bwa_mapped.bamfile")
     echo "-------------------------------------------------------"
     echo "[Stage 2 完成回報]"
     echo "使用的參考基因組: $REF_GENOME"
@@ -2602,7 +2651,8 @@ run_stage2_alignment() {
     echo "產出的比對檔案(BAM): $STAGE2/mapped_bam/"
     echo "比對率統計結果: $STAGE2/mapping_results/"
     echo "Mapping Summary CSV: $STAGE2/${PROJECT_NAME}_mapping_summary.csv"
-    echo "共計完成比對樣本數: $N_MAPPED"
+    echo "本次新增比對樣本數: $n_todo"
+    echo "累積完成比對樣本數: $N_MAPPED"
     echo "-------------------------------------------------------"
 }
 
