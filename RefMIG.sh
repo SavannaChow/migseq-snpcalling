@@ -27,8 +27,8 @@ source "$CONF_FILE"
 ENV_CHECK_FILE=".pipeline_env_ready"
 PROJECT_CONTEXT_FILE="PROJECT_CONTEXT.txt"
 LEGACY_PROJECT_NAME_FILE=".project_name"
-APP_VERSION="v3.0.1"
-APP_UPDATED_AT="2026-02-25"
+APP_VERSION="v3.0.2"
+APP_UPDATED_AT="2026-04-07"
 SELF_UPDATE_BRANCH="main"
 SELF_UPDATE_REPO_RAW="https://raw.githubusercontent.com/SavannaChow/migseq-snpcalling/${SELF_UPDATE_BRANCH}/RefMIG.sh"
 SELF_UPDATE_TIMEOUT=5
@@ -704,20 +704,20 @@ build_mapping_summary_csv() {
 
     for f in "${txt_files[@]}"; do
         sample=$(basename "$f" .txt)
-        total=$(grep "in total" "$f" | head -1 | awk '{print $1}')
-        mapped=$(grep " mapped (" "$f" | awk '{print $1}')
-        properly_paired=$(grep "properly paired" "$f" | awk '{print $1}')
-        with_mate=$(grep "with itself and mate mapped" "$f" | awk '{print $1}')
-        singletons=$(grep "singletons" "$f" | awk '{print $1}')
-        mate_diff_chr=$(grep "with mate mapped to a different chr$" "$f" | awk '{print $1}')
-        mate_diff_chr_q5=$(grep "with mate mapped to a different chr (mapQ>=5)" "$f" | awk '{print $1}')
-        secondary=$(grep " secondary" "$f" | awk '{print $1}')
-        supplementary=$(grep " supplementary" "$f" | awk '{print $1}')
-        duplicates=$(grep " duplicates" "$f" | awk '{print $1}')
-        paired_in_seq=$(grep "paired in sequencing" "$f" | awk '{print $1}')
-        read1=$(grep " read1" "$f" | awk '{print $1}')
-        read2=$(grep " read2" "$f" | awk '{print $1}')
-        echo "$sample,$total,$mapped,$properly_paired,$with_mate,$singletons,$mate_diff_chr,$mate_diff_chr_q5,$secondary,$supplementary,$duplicates,$paired_in_seq,$read1,$read2" >> "$out_csv"
+        total=$(awk '/^[0-9]+ \+ [0-9]+ in total / {print $1; exit}' "$f")
+        mapped=$(awk '/^[0-9]+ \+ [0-9]+ mapped \(/ {print $1; exit}' "$f")
+        properly_paired=$(awk '/^[0-9]+ \+ [0-9]+ properly paired / {print $1; exit}' "$f")
+        with_mate=$(awk '/^[0-9]+ \+ [0-9]+ with itself and mate mapped$/ {print $1; exit}' "$f")
+        singletons=$(awk '/^[0-9]+ \+ [0-9]+ singletons / {print $1; exit}' "$f")
+        mate_diff_chr=$(awk '/^[0-9]+ \+ [0-9]+ with mate mapped to a different chr$/ {print $1; exit}' "$f")
+        mate_diff_chr_q5=$(awk '/^[0-9]+ \+ [0-9]+ with mate mapped to a different chr \(mapQ>=5\)$/ {print $1; exit}' "$f")
+        secondary=$(awk '/^[0-9]+ \+ [0-9]+ secondary$/ {print $1; exit}' "$f")
+        supplementary=$(awk '/^[0-9]+ \+ [0-9]+ supplementary$/ {print $1; exit}' "$f")
+        duplicates=$(awk '/^[0-9]+ \+ [0-9]+ duplicates$/ {print $1; exit}' "$f")
+        paired_in_seq=$(awk '/^[0-9]+ \+ [0-9]+ paired in sequencing$/ {print $1; exit}' "$f")
+        read1=$(awk '/^[0-9]+ \+ [0-9]+ read1$/ {print $1; exit}' "$f")
+        read2=$(awk '/^[0-9]+ \+ [0-9]+ read2$/ {print $1; exit}' "$f")
+        printf "%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n" "$sample" "$total" "$mapped" "$properly_paired" "$with_mate" "$singletons" "$mate_diff_chr" "$mate_diff_chr_q5" "$secondary" "$supplementary" "$duplicates" "$paired_in_seq" "$read1" "$read2" >> "$out_csv"
     done
 }
 
