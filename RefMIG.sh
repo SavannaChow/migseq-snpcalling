@@ -27,7 +27,7 @@ source "$CONF_FILE"
 ENV_CHECK_FILE=".pipeline_env_ready"
 PROJECT_CONTEXT_FILE="PROJECT_CONTEXT.txt"
 LEGACY_PROJECT_NAME_FILE=".project_name"
-APP_VERSION="v3.0.3"
+APP_VERSION="v3.0.4"
 APP_UPDATED_AT="2026-06-30"
 SELF_UPDATE_BRANCH="main"
 SELF_UPDATE_REPO_RAW="https://raw.githubusercontent.com/SavannaChow/migseq-snpcalling/${SELF_UPDATE_BRANCH}/RefMIG.sh"
@@ -2203,7 +2203,13 @@ parse_refgenome_selection_indices() {
     selected_indices=""
 
     for token in $selection; do
-        if [[ "$token" =~ ^[0-9]+$ ]]; then
+        if [[ "$token" == "All" || "$token" == "all" || "$token" == "ALL" ]]; then
+            selected_indices=""
+            for ((i=1; i<=max_index; i++)); do
+                selected_indices="${selected_indices:+$selected_indices }$i"
+            done
+            break
+        elif [[ "$token" =~ ^[0-9]+$ ]]; then
             if [ "$token" -lt 1 ] || [ "$token" -gt "$max_index" ]; then
                 echo "錯誤：編號超出範圍：$token (有效範圍 1-$max_index)" >&2
                 return 1
@@ -2226,7 +2232,7 @@ parse_refgenome_selection_indices() {
                 esac
             done
         else
-            echo "錯誤：請輸入有效編號、逗號清單或範圍，例如 1、1-57、1,3,5-8,15。" >&2
+            echo "錯誤：請輸入有效編號、逗號清單、範圍或 All，例如 1、1-57、1,3,5-8,15、All。" >&2
             return 1
         fi
     done
@@ -2242,7 +2248,7 @@ parse_refgenome_selection_indices() {
 download_and_install_ref_genome() {
     local query temp_data timestamp history_file index selected_line accession ftp_base
     local target_dir file_name download_file full_url continue_proc fna_file abs_path
-    local total_results selected_indices selected_index
+    local total_results selected_indices selected_index build_refgenome
     local selected_accessions=()
     local downloaded_accessions=()
     local downloaded_gz_paths=()
@@ -2296,7 +2302,7 @@ download_and_install_ref_genome() {
 
         echo "搜尋結果已存檔至: $history_file"
         total_results=$(wc -l < "$temp_data" | tr -d ' ')
-        read -p "選擇要下載的 Genome 編號 (可輸入 1、1-57、1,3,5-8,15；r 重新搜尋, q 離開): " index
+        read -p "選擇要下載的 Genome 編號 (可輸入 1、1-57、1,3,5-8,15、All；r 重新搜尋, q 離開): " index
 
         if [[ "$index" == "q" || "$index" == "Q" ]]; then
             rm -f "$temp_data"
@@ -2324,6 +2330,13 @@ download_and_install_ref_genome() {
             selected_accessions+=("$accession")
         done
         rm -f "$temp_data"
+
+        read -p "下載後是否自動設定為 RefGenome、寫入 $CONF_FILE 並建立 BWA/Samtools index？(y/n): " build_refgenome
+        if [[ "$build_refgenome" == "y" || "$build_refgenome" == "Y" ]]; then
+            continue_proc="y"
+        else
+            continue_proc="n"
+        fi
         break
     done
 
@@ -2381,7 +2394,6 @@ download_and_install_ref_genome() {
         return 1
     fi
 
-    read -p "是否將剛下載的 Genome 設定為 RefGenome 並執行解壓縮與索引建置？(y/n): " continue_proc
     if [[ "$continue_proc" != "y" && "$continue_proc" != "Y" ]]; then
         echo "已略過 RefGenome 設定與 index 建置。檔案保留在 $REFGENOME_BASE_DIR。"
         return 0
