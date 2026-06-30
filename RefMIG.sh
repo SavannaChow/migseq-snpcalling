@@ -2194,9 +2194,61 @@ register_ref_genome_env_var() {
     echo "環境變數 '$env_name' 已加入 $CONF_FILE"
 }
 
+parse_refgenome_selection_indices() {
+    local selection="$1"
+    local max_index="$2"
+    local token start end i selected_indices
+
+    selection=$(echo "$selection" | tr ',' ' ')
+    selected_indices=""
+
+    for token in $selection; do
+        if [[ "$token" =~ ^[0-9]+$ ]]; then
+            if [ "$token" -lt 1 ] || [ "$token" -gt "$max_index" ]; then
+                echo "錯誤：編號超出範圍：$token (有效範圍 1-$max_index)" >&2
+                return 1
+            fi
+            case " $selected_indices " in
+                *" $token "*) ;;
+                *) selected_indices="${selected_indices:+$selected_indices }$token" ;;
+            esac
+        elif [[ "$token" =~ ^([0-9]+)-([0-9]+)$ ]]; then
+            start="${BASH_REMATCH[1]}"
+            end="${BASH_REMATCH[2]}"
+            if [ "$start" -lt 1 ] || [ "$end" -gt "$max_index" ] || [ "$start" -gt "$end" ]; then
+                echo "錯誤：範圍無效：$token (有效範圍 1-$max_index)" >&2
+                return 1
+            fi
+            for ((i=start; i<=end; i++)); do
+                case " $selected_indices " in
+                    *" $i "*) ;;
+                    *) selected_indices="${selected_indices:+$selected_indices }$i" ;;
+                esac
+            done
+        else
+            echo "錯誤：請輸入有效編號、逗號清單或範圍，例如 1、1-57、1,3,5-8,15。" >&2
+            return 1
+        fi
+    done
+
+    if [ -z "$selected_indices" ]; then
+        echo "錯誤：未選擇任何 Genome。" >&2
+        return 1
+    fi
+
+    echo "$selected_indices"
+}
+
 download_and_install_ref_genome() {
     local query temp_data timestamp history_file index selected_line accession ftp_base
     local target_dir file_name download_file full_url continue_proc fna_file abs_path
+    local total_results selected_indices selected_index
+    local selected_accessions=()
+    local downloaded_accessions=()
+    local downloaded_gz_paths=()
+    local downloaded_fna_paths=()
+    local failed_accessions=()
+    local downloaded_count failed_count i gz_path
 
     ensure_refgenome_env_ready || return 1
 
@@ -2243,7 +2295,8 @@ download_and_install_ref_genome() {
         }' "$temp_data" | tee "$history_file"
 
         echo "搜尋結果已存檔至: $history_file"
-        read -p "選擇要下載的 Genome 編號 (輸入 r 重新搜尋, q 離開): " index
+        total_results=$(wc -l < "$temp_data" | tr -d ' ')
+        read -p "選擇要下載的 Genome 編號 (可輸入 1、1-57、1,3,5-8,15；r 重新搜尋, q 離開): " index
 
         if [[ "$index" == "q" || "$index" == "Q" ]]; then
             rm -f "$temp_data"
@@ -2253,77 +2306,122 @@ download_and_install_ref_genome() {
             rm -f "$temp_data"
             continue
         fi
-        if [[ ! "$index" =~ ^[0-9]+$ ]]; then
-            echo "錯誤：請輸入有效編號。"
+        selected_indices=$(parse_refgenome_selection_indices "$index" "$total_results")
+        if [ $? -ne 0 ]; then
             rm -f "$temp_data"
             continue
         fi
 
-        selected_line=$(sed -n "${index}p" "$temp_data")
-        if [ -z "$selected_line" ]; then
-            echo "錯誤：找不到對應結果。"
-            rm -f "$temp_data"
-            continue
-        fi
-
-        accession=$(echo "$selected_line" | cut -f1)
+        selected_accessions=()
+        for selected_index in $selected_indices; do
+            selected_line=$(sed -n "${selected_index}p" "$temp_data")
+            if [ -z "$selected_line" ]; then
+                echo "錯誤：找不到對應結果：$selected_index"
+                rm -f "$temp_data"
+                continue 2
+            fi
+            accession=$(echo "$selected_line" | cut -f1)
+            selected_accessions+=("$accession")
+        done
         rm -f "$temp_data"
         break
     done
 
-    echo "擷取 $accession FTP 位置..."
-    ftp_base=$(esearch -db assembly -query "$accession" | esummary | xtract -pattern DocumentSummary -element FtpPath_GenBank | tr ' ' '\n' | grep "$accession" | head -n 1 | sed 's|^ftp://|https://|')
-
-    if [ -z "$ftp_base" ]; then
-        echo "錯誤：找不到 FTP path。"
-        return 1
-    fi
-
-    target_dir="$REFGENOME_BASE_DIR/$accession"
-    mkdir -p "$target_dir"
-
-    file_name=$(basename "$ftp_base")
-    download_file="${file_name}_genomic.fna.gz"
-    full_url="${ftp_base}/${download_file}"
-
-    echo "下載 Genome $accession 至 $target_dir ..."
-    if command -v wget >/dev/null 2>&1; then
-        wget -c --tries=0 -P "$target_dir" "$full_url" || return 1
-    elif command -v curl >/dev/null 2>&1; then
-        curl -fL --retry 5 -o "$target_dir/$download_file" "$full_url" || return 1
-    else
+    if ! command -v wget >/dev/null 2>&1 && ! command -v curl >/dev/null 2>&1; then
         echo "錯誤：找不到 wget 或 curl。"
         return 1
     fi
 
+    for accession in "${selected_accessions[@]}"; do
+        echo "擷取 $accession FTP 位置..."
+        ftp_base=$(esearch -db assembly -query "$accession" | esummary | xtract -pattern DocumentSummary -element FtpPath_GenBank | tr ' ' '\n' | grep "$accession" | head -n 1 | sed 's|^ftp://|https://|')
+
+        if [ -z "$ftp_base" ]; then
+            echo "錯誤：找不到 $accession 的 FTP path。"
+            failed_accessions+=("$accession")
+            continue
+        fi
+
+        target_dir="$REFGENOME_BASE_DIR/$accession"
+        mkdir -p "$target_dir"
+
+        file_name=$(basename "$ftp_base")
+        download_file="${file_name}_genomic.fna.gz"
+        full_url="${ftp_base}/${download_file}"
+        gz_path="$target_dir/$download_file"
+        fna_file="$target_dir/${file_name}_genomic.fna"
+
+        echo "下載 Genome $accession 至 $target_dir ..."
+        if command -v wget >/dev/null 2>&1; then
+            if ! wget -c --tries=0 -P "$target_dir" "$full_url"; then
+                failed_accessions+=("$accession")
+                continue
+            fi
+        elif command -v curl >/dev/null 2>&1; then
+            if ! curl -fL --retry 5 -o "$gz_path" "$full_url"; then
+                failed_accessions+=("$accession")
+                continue
+            fi
+        fi
+
+        downloaded_accessions+=("$accession")
+        downloaded_gz_paths+=("$gz_path")
+        downloaded_fna_paths+=("$fna_file")
+    done
+
+    downloaded_count=${#downloaded_accessions[@]}
+    failed_count=${#failed_accessions[@]}
+
     echo "--------------------------------------------------"
-    echo "基因組檔案下載完成。"
-    read -p "是否繼續設定環境變數並執行解壓縮與索引建置？(y/n): " continue_proc
-    if [[ "$continue_proc" != "y" && "$continue_proc" != "Y" ]]; then
-        echo "程序已終止。檔案保留在 $target_dir。"
+    echo "基因組檔案下載完成：$downloaded_count 個。"
+    if [ "$failed_count" -gt 0 ]; then
+        echo "下載失敗或找不到 FTP path：${failed_accessions[*]}"
+    fi
+    if [ "$downloaded_count" -eq 0 ]; then
         return 1
     fi
 
-    echo "解壓縮..."
-    gunzip -f "$target_dir/$download_file" || return 1
+    read -p "是否將剛下載的 Genome 設定為 RefGenome 並執行解壓縮與索引建置？(y/n): " continue_proc
+    if [[ "$continue_proc" != "y" && "$continue_proc" != "Y" ]]; then
+        echo "已略過 RefGenome 設定與 index 建置。檔案保留在 $REFGENOME_BASE_DIR。"
+        return 0
+    fi
 
-    fna_file="$target_dir/${file_name}_genomic.fna"
-    abs_path=$(realpath "$fna_file")
+    for ((i=0; i<downloaded_count; i++)); do
+        accession="${downloaded_accessions[$i]}"
+        gz_path="${downloaded_gz_paths[$i]}"
+        fna_file="${downloaded_fna_paths[$i]}"
 
-    register_ref_genome_env_var "$abs_path" || return 1
+        echo "--------------------------------------------------"
+        echo "處理 RefGenome: $accession"
+        if [ -f "$gz_path" ]; then
+            echo "解壓縮..."
+            gunzip -f "$gz_path" || return 1
+        elif [ -f "$fna_file" ]; then
+            echo "已存在解壓縮檔案，略過 gunzip: $fna_file"
+        else
+            echo "錯誤：找不到下載檔案：$gz_path"
+            return 1
+        fi
 
-    echo "建立 BWA index..."
-    bwa index "$abs_path" || { echo "BWA index 失敗"; return 1; }
+        abs_path=$(realpath "$fna_file")
 
-    echo "建立 Samtools index..."
-    samtools faidx "$abs_path" || { echo "Samtools faidx 失敗"; return 1; }
+        register_ref_genome_env_var "$abs_path" || return 1
+
+        echo "建立 BWA index..."
+        bwa index "$abs_path" || { echo "BWA index 失敗"; return 1; }
+
+        echo "建立 Samtools index..."
+        samtools faidx "$abs_path" || { echo "Samtools faidx 失敗"; return 1; }
+
+        REF_GENOME="$abs_path"
+        echo "Genome path: $abs_path"
+    done
 
     echo "--------------------------------------------------"
     echo "Process complete."
-    echo "Genome path: $abs_path"
     echo "請重新執行: source $CONF_FILE 使設定在新 shell 生效。"
 
-    REF_GENOME="$abs_path"
     return 0
 }
 
