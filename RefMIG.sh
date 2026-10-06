@@ -27,7 +27,7 @@ source "$CONF_FILE"
 ENV_CHECK_FILE=".pipeline_env_ready"
 PROJECT_CONTEXT_FILE="PROJECT_CONTEXT.txt"
 LEGACY_PROJECT_NAME_FILE=".project_name"
-APP_VERSION="v3.0.5"
+APP_VERSION="v3.0.6"
 APP_UPDATED_AT="2026-10-06"
 SELF_UPDATE_BRANCH="main"
 SELF_UPDATE_REPO_RAW="https://raw.githubusercontent.com/SavannaChow/migseq-snpcalling/${SELF_UPDATE_BRANCH}/RefMIG.sh"
@@ -502,12 +502,17 @@ start_stage_command_capture() {
         } > "$CURRENT_STAGE_CMD_FILE"
         chmod 755 "$CURRENT_STAGE_CMD_FILE" 2>/dev/null || true
     fi
+    {
+        echo ""
+        echo "# Full command plan for $stage_label"
+        emit_full_command_plan_script "$stage_label"
+    } >> "$CURRENT_STAGE_CMD_FILE"
 }
 
 is_tracked_external_command() {
     local first="$1"
     case "$first" in
-        angsd|ngsLD|prune_graph|bcftools|bwa|samtools|fastp|parallel|Rscript|java|gzip|gunzip|cp|mv|find|ls|cat|cut|tail|sed|awk|sort|wc|realpath|structure|structureHarvester.py|git|curl|wget|esearch|esummary|xtract|grep|head|tr|tee)
+        angsd|ngsLD|prune_graph|bcftools|bwa|samtools|fastp|parallel|Rscript|java|gzip|gunzip|cp|mv|find|ls|cat|cut|tail|sed|awk|sort|wc|realpath|structure|structureHarvester.py|runstructure|./runstructure|git|curl|wget|esearch|esummary|xtract|grep|head|tr|tee)
             return 0
             ;;
         *)
@@ -554,6 +559,28 @@ enable_command_capture() {
     # 讓 DEBUG trap 也能追蹤 function 內部命令
     set -o functrace 2>/dev/null || true
     trap 'debug_command_capture' DEBUG
+}
+
+append_generated_command_file_to_logs() {
+    local generated_file="$1"
+    local previous_command_capture_guard="$CMD_CAPTURE_GUARD"
+    [ -f "$generated_file" ] || return 0
+    CMD_CAPTURE_GUARD=1
+    if [ -n "$GLOBAL_CMD_FILE" ]; then
+        {
+            echo ""
+            echo "# Full generated command file: $generated_file"
+            cat "$generated_file"
+        } >> "$GLOBAL_CMD_FILE"
+    fi
+    if [ -n "$CURRENT_STAGE_CMD_FILE" ]; then
+        {
+            echo ""
+            echo "# Full generated command file: $generated_file"
+            cat "$generated_file"
+        } >> "$CURRENT_STAGE_CMD_FILE"
+    fi
+    CMD_CAPTURE_GUARD="$previous_command_capture_guard"
 }
 
 write_project_context() {
@@ -2090,23 +2117,147 @@ print_runtime_config() {
     echo ""
 }
 
+emit_full_command_plan() {
+    local stage_filter="${1:-all}"
+    local previous_command_capture_guard="$CMD_CAPTURE_GUARD"
+    CMD_CAPTURE_GUARD=1
+
+    if [[ "$stage_filter" == "all" || "$stage_filter" == "Stage1_Fastp" ]]; then
+        [[ "$RUN_S1" == "y" ]] && cat <<PLAN
+[S1] find "$RAW_PATH" -maxdepth 1 -type f \( -name "*_R1.fastq" -o -name "*_R1.fastq.gz" -o -name "*_R1.fq" -o -name "*_R1.fq.gz" \) | sort > "$STAGE1/raw_list_all.txt"
+[S1] parallel -j "$JOBS" --bar "r1=\"{}\"; r2=\$(printf '%s\\n' \"\$r1\" | sed 's/_R1\\.fastq\\.gz\$/_R2.fastq.gz/; s/_R1\\.fastq\$/_R2.fastq/; s/_R1\\.fq\\.gz\$/_R2.fq.gz/; s/_R1\\.fq\$/_R2.fq/'); base=\$(basename \"\$r1\" | sed 's/_R1\\.fastq\\.gz\$//; s/_R1\\.fastq\$//; s/_R1\\.fq\\.gz\$//; s/_R1\\.fq\$//'); fastp -i \"\$r1\" -I \"\$r2\" -o \"$STAGE1/trim/\${base}_R1.fastq.gz\" -O \"$STAGE1/trim/\${base}_R2.fastq.gz\" --thread 2 --qualified_quality_phred 30 --length_required 80 --html \"$STAGE1/fastp_report/\${base}.html\" --json \"$STAGE1/fastp_report/\${base}.json\"" < "$STAGE1/raw_list_todo.txt"
+PLAN
+    fi
+
+    if [[ "$stage_filter" == "all" || "$stage_filter" == "Stage2_Alignment" ]]; then
+        [[ "$RUN_S2" == "y" ]] && cat <<PLAN
+[S2] bwa mem -t "$THREADS" "$REF_GENOME" "\$r1" "\$r2" > "$STAGE2/bam/\${base}.sam"
+[S2] samtools view -Sb "$STAGE2/bam/\${base}.sam" > "$STAGE2/bam/\${base}.bam"
+[S2] samtools view -bF4 -@ "$THREADS" "$STAGE2/bam/\${base}.bam" > "$STAGE2/mapped_bam/\${base}.bam"
+[S2] samtools sort -@ "$THREADS" -o "$STAGE2/mapped_bam/\${base}_sorted.bam" "$STAGE2/mapped_bam/\${base}.bam"
+[S2] mv "$STAGE2/mapped_bam/\${base}_sorted.bam" "$STAGE2/mapped_bam/\${base}.bam"
+[S2] samtools index "$STAGE2/mapped_bam/\${base}.bam"
+[S2] samtools flagstat "$STAGE2/bam/\${base}.bam" > "$STAGE2/mapping_results/\${base}.txt"
+PLAN
+    fi
+
+    if [[ "$stage_filter" == "all" || "$stage_filter" == "Stage3_PCA" ]]; then
+        [[ "$RUN_S3" == "y" ]] && cat <<PLAN
+[S3] cp "$STAGE2/${PROJECT_NAME}_mapping_summary.csv" "$STAGE3/${PROJECT_NAME}_mapping_summary.csv"
+[S3] Rscript "$STAGE3/${PROJECT_NAME}_PCA.r"
+PLAN
+    fi
+
+    if [[ "$stage_filter" == "all" || "$stage_filter" == "Stage4_Clone" ]]; then
+        [[ "$RUN_S4" == "y" ]] && cat <<PLAN
+[S4] angsd -bam "$BAM_LIST" -GL 1 -P 1 -uniqueOnly 1 -remove_bads 1 -minMapQ 20 -minQ 30 -minInd "$MIN_IND" -snp_pval 1e-5 -minMaf 0.05 -doMajorMinor 1 -doMaf 1 -doCounts 1 -makeMatrix 1 -doIBS 1 -doCov 1 -doGeno 32 -doPost 1 -doGlf 2 -out "$STAGE4/${PROJECT_NAME}_clone_identification"
+[S4] Rscript "$STAGE4/${PROJECT_NAME}_identify_clones.r"
+PLAN
+    fi
+
+    if [[ "$stage_filter" == "all" || "$stage_filter" == "Stage5_AllSNP" ]]; then
+        [[ "$RUN_S5" == "y" ]] && cat <<PLAN
+[S5] angsd -b "$BAM_LIST" -GL 1 -uniqueOnly 1 -remove_bads 1 -minMapQ 30 -baq 1 -setMinDepth 5 -SNP_pval 1e-6 -skipTriallelic 1 -doHWE 1 -Hetbias_pval 0.00001 -minInd "$MIN_IND" -doMajorMinor 1 -doMaf 1 -dosnpstat 1 -doPost 2 -doGeno 32 -doCounts 1 -ref "$REF_GENOME" -P 1 -out "$STAGE5/allsnps"
+[S5] gzip -kfd "$STAGE5"/*.gz
+[S5] gunzip -c "$STAGE5/allsnps.mafs.gz" | tail -n +2 | cut -f 1,2 > "$STAGE5/all_snp.sites"
+[S5] angsd sites index "$STAGE5/all_snp.sites"
+PLAN
+    fi
+
+    if [[ "$stage_filter" == "all" || "$stage_filter" == "Stage6_LDPruning" ]]; then
+        [[ "$RUN_S6" == "y" ]] && cat <<PLAN
+[S6] find "$STAGE5" -maxdepth 1 -type f -exec cp -f {} "$STAGE6"/ \;
+[S6] ngsLD --geno "$STAGE6/allsnps.geno" --verbose 1 --probs 1 --n_ind "$N_IND" --n_sites "$N_SITES" --max_kb_dist "$S6_MAX_KB_DIST" --pos "$STAGE6/all_snp.sites" --n_threads "$THREADS" --extend_out 1 --out "$STAGE6/allsnpsites.LD"
+[S6] prune_graph --header -v -n "$THREADS" --in "$STAGE6/allsnpsites.LD" --weight-field "r2" --weight-filter "dist <=10000 && r2 >= 0.5" --out "$STAGE6/allsnpsites.pos"
+[S6] sed 's/:/\t/g' "$STAGE6/allsnpsites.pos" | awk '\$2!=""' | sort -k1 > "$STAGE6/LD_pruned_snp.sites"
+[S6] angsd sites index "$STAGE6/LD_pruned_snp.sites"
+PLAN
+    fi
+
+    if [[ "$stage_filter" == "all" || "$stage_filter" == "Stage7_FinalSNP" ]]; then
+        if [[ "$RUN_S7" == "y" && "$RUN_S7_WITH_LD" == "y" ]]; then
+            cat <<PLAN
+[S7-LD] angsd -sites "$STAGE6/LD_pruned_snp.sites" -b "$STAGE4/${PROJECT_NAME}_after_clones.bamfile" -GL 1 -P 1 -minInd "$MIN_IND" -minMapQ 20 -minQ 25 -sb_pval 1e-5 -Hetbias_pval 1e-5 -skipTriallelic 1 -snp_pval 1e-5 -minMaf 0.05 -doMajorMinor 1 -doMaf 1 -doCounts 1 -doGlf 2 -dosnpstat 1 -doPost 1 -doGeno 8 -doBcf 1 --ignore-RG 0 -doHWE 1 -ref "$REF_GENOME" -out "$STAGE7/LD_Pruned/${PROJECT_NAME}_snps_final_with_LD_Pruning"
+[S7-LD] bcftools view -O v -o "$STAGE7/LD_Pruned/${PROJECT_NAME}_snps_final_with_LD_Pruning.vcf" "$STAGE7/LD_Pruned/${PROJECT_NAME}_snps_final_with_LD_Pruning.bcf"
+[S7-LD] java -Xmx1024m -Xms512m -jar "\$pgdspider_jar" -inFile "$STAGE7/LD_Pruned/${PROJECT_NAME}_snps_final_with_LD_Pruning.vcf" -inFormat VCF -outFile "$STAGE7/LD_Pruned/${PROJECT_NAME}_snps_final_with_LD_Pruning.str" -outFormat STRUCTURE -spid "$STAGE7/LD_Pruned/VCF2STR.spid"
+PLAN
+        fi
+        if [[ "$RUN_S7" == "y" && "$RUN_S7_SKIP_LD" == "y" ]]; then
+            cat <<PLAN
+[S7-Skip] angsd -sites "$STAGE5/all_snp.sites" -b "$BAM_LIST" -GL 1 -P 1 -minInd "$MIN_IND" -minMapQ 20 -minQ 25 -sb_pval 1e-5 -Hetbias_pval 1e-5 -skipTriallelic 1 -snp_pval 1e-5 -minMaf 0.05 -doMajorMinor 1 -doMaf 1 -doCounts 1 -doGlf 2 -dosnpstat 1 -doPost 1 -doGeno 8 -doBcf 1 --ignore-RG 0 -doHWE 1 -ref "$REF_GENOME" -out "$STAGE7/Skip_LD_Pruning/${PROJECT_NAME}_snps_final_Skip_LD_Pruning"
+[S7-Skip] bcftools view -O v -o "$STAGE7/Skip_LD_Pruning/${PROJECT_NAME}_snps_final_Skip_LD_Pruning.vcf" "$STAGE7/Skip_LD_Pruning/${PROJECT_NAME}_snps_final_Skip_LD_Pruning.bcf"
+[S7-Skip] java -Xmx1024m -Xms512m -jar "\$pgdspider_jar" -inFile "$STAGE7/Skip_LD_Pruning/${PROJECT_NAME}_snps_final_Skip_LD_Pruning.vcf" -inFormat VCF -outFile "$STAGE7/Skip_LD_Pruning/${PROJECT_NAME}_snps_final_Skip_LD_Pruning.str" -outFormat STRUCTURE -spid "$STAGE7/Skip_LD_Pruning/VCF2STR.spid"
+PLAN
+        fi
+    fi
+
+    if [[ "$stage_filter" == "all" || "$stage_filter" == "Stage8_Structure" ]]; then
+        [[ "$RUN_S8" == "y" ]] && cat <<PLAN
+[S8] cd "$STAGE8/STRUCTURE" && ./runstructure
+PLAN
+    fi
+
+    if [[ "$stage_filter" == "all" || "$stage_filter" == "Stage9_Divergence" ]]; then
+        [[ "$RUN_S9" == "y" ]] && cat <<PLAN
+[S9] angsd -b "$STAGE9/divergence/all_populations.bamfile" -GL 1 -uniqueOnly 1 -remove_bads 1 -skipTriallelic 1 -minMapQ 25 -minQ 30 -doHWE 1 -sb_pval 1e-5 -Hetbias_pval 1e-5 -minInd "\$stage9_all_minind" -doMajorMinor 1 -doMaf 1 -dosnpstat 1 -doPost 2 -doGeno 8 -P 1 -out "$STAGE9/divergence/AllSites"
+[S9] gunzip -c "$STAGE9/divergence/AllSites.mafs.gz" | tail -n +2 | cut -f1,2 > "$STAGE9/divergence/AllSites.sites"
+[S9] angsd sites index "$STAGE9/divergence/AllSites.sites"
+[S9] angsd -sites "$STAGE9/divergence/AllSites.sites" -b "$STAGE9/divergence/<population>.normalized.bamfile" -GL 1 -P 1 -minInd "\$minind_pop" -doSaf 1 -anc "$REF_GENOME" -ref "$REF_GENOME" -out "$STAGE9/divergence/<population>"
+[S9] realSFS -cores "$THREADS" "$STAGE9/divergence/<population>.saf.idx" > "$STAGE9/divergence/<population>.sfs"
+[S9] realSFS -cores "$THREADS" "$STAGE9/divergence/<population1>.saf.idx" "$STAGE9/divergence/<population2>.saf.idx" > "$STAGE9/divergence/fst_results/<population1>.<population2>.sfs"
+[S9] realSFS fst index "$STAGE9/divergence/<population1>.saf.idx" "$STAGE9/divergence/<population2>.saf.idx" -sfs "$STAGE9/divergence/fst_results/<population1>.<population2>.sfs" -fstout "$STAGE9/divergence/fst_results/<population1>_<population2>" -cores "$THREADS"
+[S9] realSFS fst stats "$STAGE9/divergence/fst_results/<population1>_<population2>.fst.idx" -cores "$THREADS"
+PLAN
+        if [[ "$RUN_S9" == "y" && "$S9_RUN_STATS2" == "y" ]]; then
+            cat <<PLAN
+[S9] realSFS fst stats2 "$STAGE9/divergence/fst_results/<population1>_<population2>.fst.idx" -cores "$THREADS"
+PLAN
+        fi
+        if [[ "$RUN_S9" == "y" && "$S9_RUN_PERMUTATION" == "y" ]]; then
+            cat <<PLAN
+[S9-permutation] Rscript -e 'args <- commandArgs(trailingOnly = TRUE); samples <- readLines(args[[1]], warn = FALSE); pop1_n <- as.integer(args[[4]]); seed <- as.numeric(args[[5]]); if (length(samples) < 2L || pop1_n < 1L || pop1_n >= length(samples)) stop("invalid permutation group sizes"); if (anyDuplicated(samples)) stop("the two populations share one or more BAM paths"); set.seed(as.integer((seed - 1) %% 2147483646 + 1)); shuffled <- sample(samples, length(samples), replace = FALSE); writeLines(shuffled[seq_len(pop1_n)], args[[2]]); writeLines(shuffled[(pop1_n + 1L):length(shuffled)], args[[3]])' "\$perm_combined_bamfile" "\$perm_pop1_bamfile" "\$perm_pop2_bamfile" "\$perm_pop1_n" "\$perm_seed"
+[S9-permutation] angsd -sites "$STAGE9/divergence/AllSites.sites" -b "$STAGE9/divergence/fst_permutation/<pair>/perm_<n>.<population1>.bamfile" -GL 1 -P 1 -minInd "\$perm_pop1_minind" -doSaf 1 -anc "$REF_GENOME" -ref "$REF_GENOME" -out "$STAGE9/divergence/fst_permutation/<pair>/perm_<n>.<population1>"
+[S9-permutation] angsd -sites "$STAGE9/divergence/AllSites.sites" -b "$STAGE9/divergence/fst_permutation/<pair>/perm_<n>.<population2>.bamfile" -GL 1 -P 1 -minInd "\$perm_pop2_minind" -doSaf 1 -anc "$REF_GENOME" -ref "$REF_GENOME" -out "$STAGE9/divergence/fst_permutation/<pair>/perm_<n>.<population2>"
+[S9-permutation] realSFS -cores "$THREADS" "$STAGE9/divergence/fst_permutation/<pair>/perm_<n>.<population1>.saf.idx" "$STAGE9/divergence/fst_permutation/<pair>/perm_<n>.<population2>.saf.idx" > "$STAGE9/divergence/fst_permutation/<pair>/perm_<n>.<population1>.<population2>.sfs"
+[S9-permutation] realSFS fst index "$STAGE9/divergence/fst_permutation/<pair>/perm_<n>.<population1>.saf.idx" "$STAGE9/divergence/fst_permutation/<pair>/perm_<n>.<population2>.saf.idx" -sfs "$STAGE9/divergence/fst_permutation/<pair>/perm_<n>.<population1>.<population2>.sfs" -fstout "$STAGE9/divergence/fst_permutation/<pair>/perm_<n>.<population1>_<population2>" -cores "$THREADS"
+[S9-permutation] realSFS fst stats "$STAGE9/divergence/fst_permutation/<pair>/perm_<n>.<population1>_<population2>.fst.idx" -cores "$THREADS"
+[S9-permutation] Rscript -e 'args <- commandArgs(trailingOnly = TRUE); d <- read.delim(args[[1]], check.names = FALSE, na.strings = "NA"); adjust <- function(x) { result <- rep(NA_real_, length(x)); keep <- !is.na(x); result[keep] <- p.adjust(x[keep], method = "holm"); result }; d[["FST.Unweight.Pvalue.Holm"]] <- adjust(d[["FST.Unweight.Pvalue.Raw"]]); d[["FST.Weight.Pvalue.Holm"]] <- adjust(d[["FST.Weight.Pvalue.Raw"]]); write.table(d, args[[1]], sep = "\\t", row.names = FALSE, quote = FALSE, na = "NA")' "$STAGE9/divergence/fst_permutation/fst_permutation_pairwise_summary.tsv"
+PLAN
+        fi
+    fi
+    CMD_CAPTURE_GUARD="$previous_command_capture_guard"
+}
+
+emit_full_command_plan_script() {
+    local stage_filter="${1:-all}"
+    local previous_command_capture_guard="$CMD_CAPTURE_GUARD"
+    CMD_CAPTURE_GUARD=1
+    emit_full_command_plan "$stage_filter" | awk '
+        /^\[[^]]+\] / {
+            line=$0
+            sub(/^\[/, "", line)
+            split(line, parts, "] ")
+            print "# " parts[1]
+            sub(/^\[[^]]+\] /, "", $0)
+            print
+            next
+        }
+        { print }
+    '
+    CMD_CAPTURE_GUARD="$previous_command_capture_guard"
+}
+
 print_command_preview() {
     echo ""
-    echo "  指令預覽（核心命令）:"
-    [[ "$RUN_S1" == "y" ]] && echo "    [S1] parallel ... fastp -i <population_sample_species_R1.fastq> -I <population_sample_species_R2.fastq> -o $STAGE1/trim/<sample>_R1.fastq.gz -O $STAGE1/trim/<sample>_R2.fastq.gz ..."
-    [[ "$RUN_S2" == "y" ]] && echo "    [S2] bwa mem -t $THREADS \"$REF_GENOME\" <R1.fastq.gz> <R2.fastq.gz> | samtools view/sort/index ; samtools flagstat > $STAGE2/mapping_results/<sample>.txt"
-    [[ "$RUN_S3" == "y" ]] && echo "    [S3] cp $STAGE2/${PROJECT_NAME}_mapping_summary.csv $STAGE3/${PROJECT_NAME}_mapping_summary.csv ; Rscript $STAGE3/${PROJECT_NAME}_PCA.r"
-    [[ "$RUN_S4" == "y" ]] && echo "    [S4] angsd -bam <clone_bamfile> ... -doIBS 1 -doGeno 32 ... -out $STAGE4/${PROJECT_NAME}_clone_identification ; Rscript $STAGE4/${PROJECT_NAME}_identify_clones.r"
-    [[ "$RUN_S5" == "y" ]] && echo "    [S5] angsd -b <bamfile> ... -SNP_pval 1e-6 ... -out $STAGE5/allsnps ; gunzip/cut -> $STAGE5/all_snp.sites ; angsd sites index"
-    [[ "$RUN_S6" == "y" ]] && echo "    [S6] cp $STAGE5/* $STAGE6/ ; ngsLD --geno $STAGE6/allsnps.geno --pos $STAGE6/all_snp.sites --max_kb_dist $S6_MAX_KB_DIST ... ; prune_graph ... ; angsd sites index $STAGE6/LD_pruned_snp.sites"
-    if [[ "$RUN_S7" == "y" && "$RUN_S7_WITH_LD" == "y" ]]; then
-        echo "    [S7-LD] angsd -sites $STAGE6/LD_pruned_snp.sites -b $STAGE4/${PROJECT_NAME}_after_clones.bamfile ... -minMaf 0.05 ... -out $STAGE7/LD_Pruned/${PROJECT_NAME}_snps_final_with_LD_Pruning ; bcftools view ; java -jar PGDSpider3-cli.jar ..."
+    echo "  指令預覽（完整 command plan；不省略參數）:"
+    emit_full_command_plan_script all
+    if [ -n "$GLOBAL_CMD_FILE" ]; then
+        {
+            echo ""
+            echo "# Full command plan shown at final confirmation"
+            emit_full_command_plan_script all
+        } >> "$GLOBAL_CMD_FILE"
     fi
-    if [[ "$RUN_S7" == "y" && "$RUN_S7_SKIP_LD" == "y" ]]; then
-        echo "    [S7-Skip] angsd -sites $STAGE5/all_snp.sites -b <resolved bamfile> ... -minMaf 0.05 ... -out $STAGE7/Skip_LD_Pruning/${PROJECT_NAME}_snps_final_Skip_LD_Pruning ; bcftools view ; java -jar PGDSpider3-cli.jar ..."
-    fi
-    [[ "$RUN_S8" == "y" ]] && echo "    [S8] 產生 mainparams/extraparams/runstructure ; (可選) ./runstructure"
-    [[ "$RUN_S9" == "y" ]] && echo "    [S9] angsd(all populations) -> AllSites ; angsd(doSaf per pop) ; realSFS(sfs/fst index/stats) -> matrix"
 }
 
 set_run_scope_label() {
@@ -4457,6 +4608,7 @@ EOF
     fi
 
     chmod 755 "$run_dir/runstructure"
+    append_generated_command_file_to_logs "$run_dir/runstructure"
     echo "[完成] Stage 8 檔案已產生："
     echo "  - $run_dir/mainparams"
     echo "  - $run_dir/extraparams"

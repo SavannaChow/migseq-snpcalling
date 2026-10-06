@@ -6,9 +6,9 @@ Credit: AllenChen's lab, Biodiversity Research Center, Academia Sinica
 
 ## 目前版本
 
-`RefMIG.sh v3.0.5`（2026-10-06）
+`RefMIG.sh v3.0.6`（2026-10-06）
 
-本版本新增 Stage 9 的 pairwise Fst permutation 顯著性檢定。執行時可選擇 permutation 次數與 random seed；每次固定兩群樣本數，重新分配個體族群標籤，重算 SAF、2D-SFS、weighted Fst 與 unweighted Fst。結果會輸出每次 permutation、raw p-value、Holm 校正 p-value，以及兩種 Fst 的 p-value matrix。
+本版本新增完整 command plan 顯示與記錄。確認畫面、global command log、各 Stage command log 會保存完整 shell 指令與參數，不再使用省略符號；Stage 8 產生的 runstructure 內容也會完整記錄。另保留 Stage 9 pairwise Fst permutation 顯著性檢定功能。
 
 RefMIG.sh 啟動時會從 GitHub `main` 分支檢查 `RefMIG.sh` 更新。發現新版本後可直接下載覆蓋，重新執行即可使用更新版本。
 
