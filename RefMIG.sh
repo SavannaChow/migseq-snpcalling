@@ -27,8 +27,8 @@ source "$CONF_FILE"
 ENV_CHECK_FILE=".pipeline_env_ready"
 PROJECT_CONTEXT_FILE="PROJECT_CONTEXT.txt"
 LEGACY_PROJECT_NAME_FILE=".project_name"
-APP_VERSION="v3.0.4"
-APP_UPDATED_AT="2026-06-30"
+APP_VERSION="v3.0.5"
+APP_UPDATED_AT="2026-10-06"
 SELF_UPDATE_BRANCH="main"
 SELF_UPDATE_REPO_RAW="https://raw.githubusercontent.com/SavannaChow/migseq-snpcalling/${SELF_UPDATE_BRANCH}/RefMIG.sh"
 SELF_UPDATE_TIMEOUT=5
@@ -407,6 +407,9 @@ S7_STR_FILE=""
 BAM_LIST_DIV_ALL_INPUT=""
 STAGE9_LAST_RUN_DIR=""
 S9_RUN_STATS2="n"
+S9_RUN_PERMUTATION="n"
+S9_PERMUTATION_N="0"
+S9_PERMUTATION_SEED="12345"
 STAGE8_POPINFO_ENABLED="n"
 USER_SELECTED_BAM_STAGE5="n"
 USER_SELECTED_BAM_STAGE6="n"
@@ -452,6 +455,9 @@ reset_runtime_state() {
     BAM_LIST_DIV_ALL_INPUT=""
     STAGE9_LAST_RUN_DIR=""
     S9_RUN_STATS2="n"
+    S9_RUN_PERMUTATION="n"
+    S9_PERMUTATION_N="0"
+    S9_PERMUTATION_SEED="12345"
     STAGE8_POPINFO_ENABLED="n"
     USER_SELECTED_BAM_STAGE5="n"
     USER_SELECTED_BAM_STAGE6="n"
@@ -872,6 +878,95 @@ normalize_bamfile_to_absolute() {
         abs_line=$(realpath "$abs_line")
         echo "$abs_line" >> "$output_bamfile"
     done < "$input_bamfile"
+}
+
+stage9_is_number() {
+    [[ "$1" =~ ^-?[0-9]+([.][0-9]+)?([eE][+-]?[0-9]+)?$ ]]
+}
+
+stage9_parse_fst_stats() {
+    local stats_text="$1"
+    local stats_line raw_line uw_val wt_val
+
+    stats_line=$(printf "%s\n" "$stats_text" | grep -E 'FST\.Unweight.*Fst\.Weight' | tail -n1)
+    if [ -n "$stats_line" ]; then
+        uw_val=$(printf "%s\n" "$stats_line" | sed -E 's/.*FST\.Unweight[^:]*:([0-9eE+.-]+).*/\1/')
+        wt_val=$(printf "%s\n" "$stats_line" | sed -E 's/.*Fst\.Weight:([0-9eE+.-]+).*/\1/')
+    else
+        raw_line=$(printf "%s\n" "$stats_text" | grep -E '^[[:space:]]*[0-9eE+.-]+[[:space:]]+[0-9eE+.-]+[[:space:]]*$' | tail -n1)
+        uw_val=$(printf "%s\n" "$raw_line" | awk '{print $1}')
+        wt_val=$(printf "%s\n" "$raw_line" | awk '{print $2}')
+    fi
+    [ -z "$uw_val" ] && uw_val="NA"
+    [ -z "$wt_val" ] && wt_val="NA"
+    printf "%s\t%s\n" "$uw_val" "$wt_val"
+}
+
+stage9_write_permutation_groups() {
+    local combined_bamfile="$1"
+    local out_pop1="$2"
+    local out_pop2="$3"
+    local pop1_n="$4"
+    local seed="$5"
+
+    Rscript -e '
+        args <- commandArgs(trailingOnly = TRUE)
+        samples <- readLines(args[[1]], warn = FALSE)
+        pop1_n <- as.integer(args[[4]])
+        seed <- as.numeric(args[[5]])
+        if (length(samples) < 2L || pop1_n < 1L || pop1_n >= length(samples)) stop("invalid permutation group sizes")
+        if (anyDuplicated(samples)) stop("the two populations share one or more BAM paths")
+        set.seed(as.integer((seed - 1) %% 2147483646 + 1))
+        shuffled <- sample(samples, length(samples), replace = FALSE)
+        writeLines(shuffled[seq_len(pop1_n)], args[[2]])
+        writeLines(shuffled[(pop1_n + 1L):length(shuffled)], args[[3]])
+    ' "$combined_bamfile" "$out_pop1" "$out_pop2" "$pop1_n" "$seed"
+}
+
+stage9_adjust_permutation_pvalues() {
+    local summary_file="$1"
+
+    Rscript -e '
+        args <- commandArgs(trailingOnly = TRUE)
+        d <- read.delim(args[[1]], check.names = FALSE, na.strings = "NA")
+        adjust <- function(x) {
+            result <- rep(NA_real_, length(x))
+            keep <- !is.na(x)
+            result[keep] <- p.adjust(x[keep], method = "holm")
+            result
+        }
+        d[["FST.Unweight.Pvalue.Holm"]] <- adjust(d[["FST.Unweight.Pvalue.Raw"]])
+        d[["FST.Weight.Pvalue.Holm"]] <- adjust(d[["FST.Weight.Pvalue.Raw"]])
+        write.table(d, args[[1]], sep = "\t", row.names = FALSE, quote = FALSE, na = "NA")
+    ' "$summary_file"
+}
+
+stage9_write_permutation_matrix() {
+    local summary_file="$1"
+    local value_column="$2"
+    local output_file="$3"
+    shift 3
+    local populations=("$@")
+    local p1 p2 val
+
+    {
+        printf "Population"
+        for p1 in "${populations[@]}"; do printf "\t%s" "$p1"; done
+        printf "\n"
+        for p1 in "${populations[@]}"; do
+            printf "%s" "$p1"
+            for p2 in "${populations[@]}"; do
+                if [ "$p1" = "$p2" ]; then
+                    val="NA"
+                else
+                    val=$(awk -F'\t' -v a="$p1" -v b="$p2" -v col="$value_column" 'NR>1 && (($1==a && $2==b) || ($1==b && $2==a)) {print $col; exit}' "$summary_file")
+                    [ -z "$val" ] && val="NA"
+                fi
+                printf "\t%s" "$val"
+            done
+            printf "\n"
+        done
+    } > "$output_file"
 }
 
 collect_stage9_population_bamfiles() {
@@ -2635,6 +2730,30 @@ collect_inputs() {
         echo "- stats2: 輸出視窗/區段層級統計（檔案較大、耗時較長）"
         read -p "是否執行 stats2（較耗時）? (y/n) [n]: " S9_RUN_STATS2
         [ -z "$S9_RUN_STATS2" ] && S9_RUN_STATS2="n"
+        read -p "是否執行 pairwise Fst permutation 顯著性檢定? (y/n) [n]: " S9_RUN_PERMUTATION
+        [ -z "$S9_RUN_PERMUTATION" ] && S9_RUN_PERMUTATION="n"
+        if [[ "$S9_RUN_PERMUTATION" == "y" || "$S9_RUN_PERMUTATION" == "Y" ]]; then
+            S9_RUN_PERMUTATION="y"
+            while true; do
+                read -p "每個 population pair 的 permutation 次數 [999]: " S9_PERMUTATION_N
+                [ -z "$S9_PERMUTATION_N" ] && S9_PERMUTATION_N="999"
+                if [[ "$S9_PERMUTATION_N" =~ ^[1-9][0-9]*$ ]]; then
+                    break
+                fi
+                echo "錯誤：permutation 次數必須是大於 0 的整數。"
+            done
+            while true; do
+                read -p "Permutation random seed（可重現結果）[12345]: " S9_PERMUTATION_SEED
+                [ -z "$S9_PERMUTATION_SEED" ] && S9_PERMUTATION_SEED="12345"
+                if [[ "$S9_PERMUTATION_SEED" =~ ^[1-9][0-9]*$ ]]; then
+                    break
+                fi
+                echo "錯誤：random seed 必須是大於 0 的整數。"
+            done
+        else
+            S9_RUN_PERMUTATION="n"
+            S9_PERMUTATION_N="0"
+        fi
         if [[ "$RUN_S4" != "y" && "$RUN_S3" != "y" ]]; then
             select_stage34_bamfile_input "請選擇 Stage9 要使用的『所有族群』BAM list (.bamfile)" BAM_LIST_DIV_ALL_INPUT || return $?
         fi
@@ -2703,6 +2822,11 @@ confirm_run() {
     [[ "$RUN_S7" == "y" ]] && printf "  %-15s : %s\n" "Stage7 BAM來源" "$bam_source_s7"
     [[ "$RUN_S9" == "y" ]] && printf "  %-15s : %s\n" "Stage9 全族群BAM" "$BAM_LIST_DIV_ALL_INPUT"
     [[ "$RUN_S9" == "y" ]] && printf "  %-15s : %s\n" "Stage9 跑stats2" "$S9_RUN_STATS2"
+    [[ "$RUN_S9" == "y" ]] && printf "  %-15s : %s\n" "Stage9 permutation" "$S9_RUN_PERMUTATION"
+    if [[ "$RUN_S9" == "y" && "$S9_RUN_PERMUTATION" == "y" ]]; then
+        printf "  %-15s : %s\n" "Permutation 次數" "$S9_PERMUTATION_N"
+        printf "  %-15s : %s\n" "Permutation seed" "$S9_PERMUTATION_SEED"
+    fi
 
     if [[ "$RUN_MODE" == "1" && "$RUN_S3" == "y" ]]; then
         printf "  %-15s : %s\n" "PCA Outlier 決策" "$([[ "$AUTO_PCA_CHOICE" == "1" ]] && echo "移除" || echo "保留")"
@@ -3694,12 +3818,19 @@ run_stage7_final_snp() {
 run_stage9_genetic_divergence() {
     local stage9_dir stage9_pop_dir stage9_all_bamfile stage9_all_bam_abs
     local stage9_fst_dir stage9_stats2_dir stage9_matrix_dir
+    local stage9_perm_dir perm_summary_file perm_replicates_file
     local stage9_all_n stage9_all_minind
-    local pop_files=() pop_norm_files=() pop_names=()
+    local pop_files=() pop_norm_files=() pop_names=() pop_sample_counts=() pop_mininds=()
     local f n_pop minind_pop pop_name pop_norm
     local i j p1 p2 pair_tag pair_sfs fst_prefix fst_idx
     local fst_stats_file fst_stats2_file fst_summary_file
     local stats_line raw_line uw_val wt_val val
+    local pair_counter=0 perm_i perm_seed perm_pair_dir perm_combined_bamfile
+    local perm_pop1_bamfile perm_pop2_bamfile perm_pop1_prefix perm_pop2_prefix
+    local perm_sfs perm_fst_prefix perm_fst_idx perm_stats_output perm_values
+    local perm_uw perm_wt perm_valid_uw=0 perm_valid_wt=0 perm_extreme_uw=0 perm_extreme_wt=0
+    local perm_p_uw perm_p_wt
+    local perm_pop1_n perm_pop2_n perm_pop1_minind perm_pop2_minind
 
     if ! command -v realSFS >/dev/null 2>&1; then
         echo "錯誤：找不到 realSFS，無法執行 Stage9。"
@@ -3727,6 +3858,14 @@ run_stage9_genetic_divergence() {
     if [[ "$S9_RUN_STATS2" == "y" || "$S9_RUN_STATS2" == "Y" ]]; then
         stage9_stats2_dir="$stage9_dir/fst_stats2"
         mkdir -p "$stage9_stats2_dir"
+    fi
+    if [[ "$S9_RUN_PERMUTATION" == "y" || "$S9_RUN_PERMUTATION" == "Y" ]]; then
+        stage9_perm_dir="$stage9_dir/fst_permutation"
+        mkdir -p "$stage9_perm_dir"
+        perm_summary_file="$stage9_perm_dir/fst_permutation_pairwise_summary.tsv"
+        perm_replicates_file="$stage9_perm_dir/fst_permutation_replicates.tsv"
+        printf "Population1\tPopulation2\tPermutations.Requested\tFST.Unweight.Permutations.Valid\tFST.Unweight.Extreme\tFST.Unweight.Observed\tFST.Unweight.Pvalue.Raw\tFST.Weight.Permutations.Valid\tFST.Weight.Extreme\tFST.Weight.Observed\tFST.Weight.Pvalue.Raw\n" > "$perm_summary_file"
+        printf "Population1\tPopulation2\tPermutation\tFST.Unweight\tFST.Weight\n" > "$perm_replicates_file"
     fi
     STAGE9_LAST_RUN_DIR="$stage9_dir"
 
@@ -3793,6 +3932,8 @@ run_stage9_genetic_divergence() {
         n_pop=$(wc -l < "$pop_norm")
         minind_pop=$(( n_pop * 8 / 10 ))
         [ "$minind_pop" -lt 1 ] && minind_pop=1
+        pop_sample_counts+=("$n_pop")
+        pop_mininds+=("$minind_pop")
 
         angsd -sites "$stage9_dir/AllSites.sites" -b "$pop_norm" -GL 1 -P 1 -minInd "$minind_pop" -doSaf 1 -anc "$REF_GENOME" -ref "$REF_GENOME" -out "$stage9_dir/${pop_name}"
     done
@@ -3846,6 +3987,101 @@ run_stage9_genetic_divergence() {
             [ -z "$uw_val" ] && uw_val="NA"
             [ -z "$wt_val" ] && wt_val="NA"
             echo -e "$p1\t$p2\t$uw_val\t$wt_val" >> "$fst_summary_file"
+
+            if [[ "$S9_RUN_PERMUTATION" == "y" || "$S9_RUN_PERMUTATION" == "Y" ]]; then
+                pair_counter=$((pair_counter + 1))
+                perm_pair_dir="$stage9_perm_dir/$pair_tag"
+                mkdir -p "$perm_pair_dir"
+                perm_combined_bamfile="$perm_pair_dir/combined_original.bamfile"
+                awk 'NF {print}' "${pop_norm_files[$i]}" "${pop_norm_files[$j]}" > "$perm_combined_bamfile"
+
+                if [ "$(sort "$perm_combined_bamfile" | uniq -d | wc -l | tr -d '[:space:]')" -ne 0 ]; then
+                    echo "錯誤：$p1 與 $p2 的 population.bamfile 含有重複 BAM，無法做正確 permutation。"
+                    return 1
+                fi
+
+                perm_valid_uw=0
+                perm_valid_wt=0
+                perm_extreme_uw=0
+                perm_extreme_wt=0
+                perm_pop1_n="${pop_sample_counts[$i]}"
+                perm_pop2_n="${pop_sample_counts[$j]}"
+                perm_pop1_minind="${pop_mininds[$i]}"
+                perm_pop2_minind="${pop_mininds[$j]}"
+                echo "[Stage 9 - Permutation] $p1 vs $p2：$S9_PERMUTATION_N 次"
+
+                for ((perm_i=1; perm_i<=S9_PERMUTATION_N; perm_i++)); do
+                    perm_seed=$((S9_PERMUTATION_SEED + pair_counter * 1000000 + perm_i))
+                    perm_pop1_bamfile="$perm_pair_dir/perm_${perm_i}.${p1}.bamfile"
+                    perm_pop2_bamfile="$perm_pair_dir/perm_${perm_i}.${p2}.bamfile"
+                    if ! stage9_write_permutation_groups "$perm_combined_bamfile" "$perm_pop1_bamfile" "$perm_pop2_bamfile" "$perm_pop1_n" "$perm_seed"; then
+                        echo "錯誤：$p1 vs $p2 的第 $perm_i 次 permutation 無法建立族群分組。"
+                        return 1
+                    fi
+
+                    perm_pop1_prefix="$perm_pair_dir/perm_${perm_i}.${p1}"
+                    perm_pop2_prefix="$perm_pair_dir/perm_${perm_i}.${p2}"
+                    if ! angsd -sites "$stage9_dir/AllSites.sites" -b "$perm_pop1_bamfile" -GL 1 -P 1 -minInd "$perm_pop1_minind" -doSaf 1 -anc "$REF_GENOME" -ref "$REF_GENOME" -out "$perm_pop1_prefix"; then
+                        echo "錯誤：$p1 vs $p2 的第 $perm_i 次 permutation 無法計算 $p1 SAF。"
+                        return 1
+                    fi
+                    if ! angsd -sites "$stage9_dir/AllSites.sites" -b "$perm_pop2_bamfile" -GL 1 -P 1 -minInd "$perm_pop2_minind" -doSaf 1 -anc "$REF_GENOME" -ref "$REF_GENOME" -out "$perm_pop2_prefix"; then
+                        echo "錯誤：$p1 vs $p2 的第 $perm_i 次 permutation 無法計算 $p2 SAF。"
+                        return 1
+                    fi
+
+                    perm_sfs="$perm_pair_dir/perm_${perm_i}.${p1}.${p2}.sfs"
+                    if ! realSFS -cores "$THREADS" "${perm_pop1_prefix}.saf.idx" "${perm_pop2_prefix}.saf.idx" > "$perm_sfs"; then
+                        echo "錯誤：$p1 vs $p2 的第 $perm_i 次 permutation 無法計算 2D-SFS。"
+                        return 1
+                    fi
+                    perm_fst_prefix="$perm_pair_dir/perm_${perm_i}.${pair_tag}"
+                    if ! realSFS fst index "${perm_pop1_prefix}.saf.idx" "${perm_pop2_prefix}.saf.idx" -sfs "$perm_sfs" -fstout "$perm_fst_prefix" -cores "$THREADS"; then
+                        echo "錯誤：$p1 vs $p2 的第 $perm_i 次 permutation 無法建立 Fst index。"
+                        return 1
+                    fi
+                    perm_fst_idx="${perm_fst_prefix}.fst.idx"
+                    if ! perm_stats_output=$(realSFS fst stats "$perm_fst_idx" -cores "$THREADS" 2>&1); then
+                        echo "錯誤：$p1 vs $p2 的第 $perm_i 次 permutation 無法計算 Fst。"
+                        return 1
+                    fi
+                    perm_values=$(stage9_parse_fst_stats "$perm_stats_output")
+                    IFS=$'\t' read -r perm_uw perm_wt <<< "$perm_values"
+                    printf "%s\t%s\t%s\t%s\t%s\n" "$p1" "$p2" "$perm_i" "$perm_uw" "$perm_wt" >> "$perm_replicates_file"
+
+                    if stage9_is_number "$perm_uw" && stage9_is_number "$uw_val"; then
+                        perm_valid_uw=$((perm_valid_uw + 1))
+                        if awk -v perm="$perm_uw" -v observed="$uw_val" 'BEGIN {exit !(perm >= observed)}'; then
+                            perm_extreme_uw=$((perm_extreme_uw + 1))
+                        fi
+                    fi
+                    if stage9_is_number "$perm_wt" && stage9_is_number "$wt_val"; then
+                        perm_valid_wt=$((perm_valid_wt + 1))
+                        if awk -v perm="$perm_wt" -v observed="$wt_val" 'BEGIN {exit !(perm >= observed)}'; then
+                            perm_extreme_wt=$((perm_extreme_wt + 1))
+                        fi
+                    fi
+
+                    rm -f "$perm_pop1_bamfile" "$perm_pop2_bamfile" "${perm_pop1_prefix}".saf* "${perm_pop2_prefix}".saf* "$perm_sfs" "${perm_fst_prefix}".fst.gz "${perm_fst_prefix}".fst.idx
+                    if (( perm_i == 1 || perm_i % 10 == 0 || perm_i == S9_PERMUTATION_N )); then
+                        echo "[Stage 9 - Permutation] $p1 vs $p2：$perm_i/$S9_PERMUTATION_N"
+                    fi
+                done
+
+                if [ "$perm_valid_uw" -gt 0 ]; then
+                    perm_p_uw=$(awk -v extreme="$perm_extreme_uw" -v valid="$perm_valid_uw" 'BEGIN {printf "%.10g", (1 + extreme) / (1 + valid)}')
+                else
+                    perm_p_uw="NA"
+                fi
+                if [ "$perm_valid_wt" -gt 0 ]; then
+                    perm_p_wt=$(awk -v extreme="$perm_extreme_wt" -v valid="$perm_valid_wt" 'BEGIN {printf "%.10g", (1 + extreme) / (1 + valid)}')
+                else
+                    perm_p_wt="NA"
+                fi
+                printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" "$p1" "$p2" "$S9_PERMUTATION_N" "$perm_valid_uw" "$perm_extreme_uw" "$uw_val" "$perm_p_uw" "$perm_valid_wt" "$perm_extreme_wt" "$wt_val" "$perm_p_wt" >> "$perm_summary_file"
+                rm -f "$perm_combined_bamfile"
+                rmdir "$perm_pair_dir" 2>/dev/null || true
+            fi
         done
     done
 
@@ -3887,6 +4123,17 @@ run_stage9_genetic_divergence() {
         done
     } > "$stage9_matrix_dir/fst_weight_matrix.tsv"
 
+    if [[ "$S9_RUN_PERMUTATION" == "y" || "$S9_RUN_PERMUTATION" == "Y" ]]; then
+        if ! stage9_adjust_permutation_pvalues "$perm_summary_file"; then
+            echo "錯誤：無法計算 permutation p-value 的 Holm 多重比較校正。"
+            return 1
+        fi
+        stage9_write_permutation_matrix "$perm_summary_file" 7 "$stage9_perm_dir/fst_unweight_permutation_pvalue_raw_matrix.tsv" "${pop_names[@]}"
+        stage9_write_permutation_matrix "$perm_summary_file" 8 "$stage9_perm_dir/fst_unweight_permutation_pvalue_holm_matrix.tsv" "${pop_names[@]}"
+        stage9_write_permutation_matrix "$perm_summary_file" 12 "$stage9_perm_dir/fst_weight_permutation_pvalue_raw_matrix.tsv" "${pop_names[@]}"
+        stage9_write_permutation_matrix "$perm_summary_file" 13 "$stage9_perm_dir/fst_weight_permutation_pvalue_holm_matrix.tsv" "${pop_names[@]}"
+    fi
+
     echo "-------------------------------------------------------"
     echo "[Stage 9 完成回報]"
     echo "AllSites: $stage9_dir/AllSites.sites"
@@ -3898,6 +4145,13 @@ run_stage9_genetic_divergence() {
         echo "FST stats2: 已略過（可下次選 y 啟用）"
     fi
     echo "FST matrix 資料夾: $stage9_matrix_dir"
+    if [[ "$S9_RUN_PERMUTATION" == "y" || "$S9_RUN_PERMUTATION" == "Y" ]]; then
+        echo "FST permutation 資料夾: $stage9_perm_dir"
+        echo "Permutation 次數（每個 pair）: $S9_PERMUTATION_N"
+        echo "Permutation seed: $S9_PERMUTATION_SEED"
+    else
+        echo "FST permutation: 已略過（可下次選 y 啟用）"
+    fi
     echo "輸出資料夾: $stage9_dir"
     echo "-------------------------------------------------------"
 }
