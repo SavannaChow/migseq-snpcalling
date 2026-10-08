@@ -27,7 +27,7 @@ source "$CONF_FILE"
 ENV_CHECK_FILE=".pipeline_env_ready"
 PROJECT_CONTEXT_FILE="PROJECT_CONTEXT.txt"
 LEGACY_PROJECT_NAME_FILE=".project_name"
-APP_VERSION="v3.0.7"
+APP_VERSION="v3.0.8"
 APP_UPDATED_AT="2026-10-06"
 SELF_UPDATE_BRANCH="main"
 SELF_UPDATE_REPO_RAW="https://raw.githubusercontent.com/SavannaChow/migseq-snpcalling/${SELF_UPDATE_BRANCH}/RefMIG.sh"
@@ -955,6 +955,19 @@ stage9_write_permutation_groups() {
     ' "$combined_bamfile" "$out_pop1" "$out_pop2" "$pop1_n" "$seed"
 }
 
+stage9_write_permutation_failure() {
+    local perm_i="$1"
+    local failed_step="$2"
+    local message="$3"
+
+    message=${message//$'\t'/ }
+    message=${message//$'\n'/ }
+    message=${message:0:300}
+    [ -z "$message" ] && message="command exited non-zero"
+    printf "%s\t%s\t%s\tNA\tNA\n" "$S9_PERM_P1" "$S9_PERM_P2" "$perm_i" > "$S9_PERM_RESULT_DIR/perm_${perm_i}.tsv"
+    printf "%s\t%s\t%s\t%s\t%s\n" "$S9_PERM_P1" "$S9_PERM_P2" "$perm_i" "$failed_step" "$message" > "$S9_PERM_ERROR_DIR/perm_${perm_i}.tsv"
+}
+
 stage9_run_permutation_replicate() {
     local perm_i="$1"
     local perm_seed perm_pop1_bamfile perm_pop2_bamfile
@@ -972,34 +985,32 @@ stage9_run_permutation_replicate() {
     perm_result_file="$S9_PERM_RESULT_DIR/perm_${perm_i}.tsv"
 
     if ! stage9_write_permutation_groups "$S9_PERM_COMBINED_BAMFILE" "$perm_pop1_bamfile" "$perm_pop2_bamfile" "$S9_PERM_POP1_N" "$perm_seed"; then
-        echo "錯誤：$S9_PERM_P1 vs $S9_PERM_P2 的第 $perm_i 次 permutation 無法建立族群分組。" >&2
-        return 1
-    fi
-    if ! angsd -sites "$S9_PERM_ALL_SITES" -b "$perm_pop1_bamfile" -GL 1 -P 1 -minInd "$S9_PERM_POP1_MININD" -doSaf 1 -anc "$REF_GENOME" -ref "$REF_GENOME" -out "$perm_pop1_prefix"; then
-        echo "錯誤：$S9_PERM_P1 vs $S9_PERM_P2 的第 $perm_i 次 permutation 無法計算 $S9_PERM_P1 SAF。" >&2
-        return 1
-    fi
-    if ! angsd -sites "$S9_PERM_ALL_SITES" -b "$perm_pop2_bamfile" -GL 1 -P 1 -minInd "$S9_PERM_POP2_MININD" -doSaf 1 -anc "$REF_GENOME" -ref "$REF_GENOME" -out "$perm_pop2_prefix"; then
-        echo "錯誤：$S9_PERM_P1 vs $S9_PERM_P2 的第 $perm_i 次 permutation 無法計算 $S9_PERM_P2 SAF。" >&2
-        return 1
-    fi
-    if ! realSFS -cores "$S9_PERMUTATION_REALSFS_CORES" "${perm_pop1_prefix}.saf.idx" "${perm_pop2_prefix}.saf.idx" > "$perm_sfs"; then
-        echo "錯誤：$S9_PERM_P1 vs $S9_PERM_P2 的第 $perm_i 次 permutation 無法計算 2D-SFS。" >&2
-        return 1
-    fi
-    if ! realSFS fst index "${perm_pop1_prefix}.saf.idx" "${perm_pop2_prefix}.saf.idx" -sfs "$perm_sfs" -fstout "$perm_fst_prefix" -cores "$S9_PERMUTATION_REALSFS_CORES"; then
-        echo "錯誤：$S9_PERM_P1 vs $S9_PERM_P2 的第 $perm_i 次 permutation 無法建立 Fst index。" >&2
-        return 1
-    fi
-    if ! perm_stats_output=$(realSFS fst stats "$perm_fst_idx" -cores "$S9_PERMUTATION_REALSFS_CORES" 2>&1); then
-        echo "錯誤：$S9_PERM_P1 vs $S9_PERM_P2 的第 $perm_i 次 permutation 無法計算 Fst。" >&2
-        return 1
+        stage9_write_permutation_failure "$perm_i" "group_assignment" "Rscript could not create permuted population BAM lists"
+    elif ! angsd -sites "$S9_PERM_ALL_SITES" -b "$perm_pop1_bamfile" -GL 1 -P 1 -minInd "$S9_PERM_POP1_MININD" -doSaf 1 -anc "$REF_GENOME" -ref "$REF_GENOME" -out "$perm_pop1_prefix"; then
+        stage9_write_permutation_failure "$perm_i" "angsd_pop1_saf" "ANGSD exited non-zero while calculating $S9_PERM_P1 SAF"
+    elif ! angsd -sites "$S9_PERM_ALL_SITES" -b "$perm_pop2_bamfile" -GL 1 -P 1 -minInd "$S9_PERM_POP2_MININD" -doSaf 1 -anc "$REF_GENOME" -ref "$REF_GENOME" -out "$perm_pop2_prefix"; then
+        stage9_write_permutation_failure "$perm_i" "angsd_pop2_saf" "ANGSD exited non-zero while calculating $S9_PERM_P2 SAF"
+    elif ! realSFS -cores "$S9_PERMUTATION_REALSFS_CORES" "${perm_pop1_prefix}.saf.idx" "${perm_pop2_prefix}.saf.idx" > "$perm_sfs"; then
+        stage9_write_permutation_failure "$perm_i" "realSFS_2dSFS" "realSFS exited non-zero while calculating 2D-SFS"
+    elif ! realSFS fst index "${perm_pop1_prefix}.saf.idx" "${perm_pop2_prefix}.saf.idx" -sfs "$perm_sfs" -fstout "$perm_fst_prefix" -cores "$S9_PERMUTATION_REALSFS_CORES"; then
+        stage9_write_permutation_failure "$perm_i" "realSFS_fst_index" "realSFS fst index exited non-zero"
+    elif ! perm_stats_output=$(realSFS fst stats "$perm_fst_idx" -cores "$S9_PERMUTATION_REALSFS_CORES" 2>&1); then
+        stage9_write_permutation_failure "$perm_i" "realSFS_fst_stats" "$perm_stats_output"
+    else
+        perm_values=$(stage9_parse_fst_stats "$perm_stats_output")
+        IFS=$'\t' read -r perm_uw perm_wt <<< "$perm_values"
+        printf "%s\t%s\t%s\t%s\t%s\n" "$S9_PERM_P1" "$S9_PERM_P2" "$perm_i" "$perm_uw" "$perm_wt" > "$perm_result_file"
+        if ! stage9_is_number "$perm_uw" || ! stage9_is_number "$perm_wt"; then
+            message="realSFS fst stats returned no numeric Fst value: $perm_stats_output"
+            message=${message//$'\t'/ }
+            message=${message//$'\n'/ }
+            message=${message:0:300}
+            printf "%s\t%s\t%s\t%s\t%s\n" "$S9_PERM_P1" "$S9_PERM_P2" "$perm_i" "realSFS_fst_stats_no_numeric_value" "$message" > "$S9_PERM_ERROR_DIR/perm_${perm_i}.tsv"
+        fi
     fi
 
-    perm_values=$(stage9_parse_fst_stats "$perm_stats_output")
-    IFS=$'\t' read -r perm_uw perm_wt <<< "$perm_values"
-    printf "%s\t%s\t%s\t%s\t%s\n" "$S9_PERM_P1" "$S9_PERM_P2" "$perm_i" "$perm_uw" "$perm_wt" > "$perm_result_file"
     rm -f "$perm_pop1_bamfile" "$perm_pop2_bamfile" "${perm_pop1_prefix}".saf* "${perm_pop2_prefix}".saf* "$perm_sfs" "${perm_fst_prefix}".fst.gz "${perm_fst_prefix}".fst.idx
+    return 0
 }
 
 stage9_adjust_permutation_pvalues() {
@@ -4037,15 +4048,15 @@ run_stage7_final_snp() {
 run_stage9_genetic_divergence() {
     local stage9_dir stage9_pop_dir stage9_all_bamfile stage9_all_bam_abs
     local stage9_fst_dir stage9_stats2_dir stage9_matrix_dir
-    local stage9_perm_dir perm_summary_file perm_replicates_file
+    local stage9_perm_dir perm_summary_file perm_replicates_file perm_errors_file
     local stage9_all_n stage9_all_minind
     local pop_files=() pop_norm_files=() pop_names=() pop_sample_counts=() pop_mininds=()
     local f n_pop minind_pop pop_name pop_norm
     local i j p1 p2 pair_tag pair_sfs fst_prefix fst_idx
     local fst_stats_file fst_stats2_file fst_summary_file
     local stats_line raw_line uw_val wt_val val
-    local pair_counter=0 perm_pair_dir perm_combined_bamfile perm_result_dir perm_actual_jobs
-    local perm_failed perm_pid
+    local pair_counter=0 perm_pair_dir perm_combined_bamfile perm_result_dir perm_error_dir perm_actual_jobs
+    local perm_failed perm_pid perm_failed_replicates
     local perm_pids=()
     local perm_uw perm_wt perm_valid_uw=0 perm_valid_wt=0 perm_extreme_uw=0 perm_extreme_wt=0
     local perm_p_uw perm_p_wt
@@ -4082,8 +4093,10 @@ run_stage9_genetic_divergence() {
         mkdir -p "$stage9_perm_dir"
         perm_summary_file="$stage9_perm_dir/fst_permutation_pairwise_summary.tsv"
         perm_replicates_file="$stage9_perm_dir/fst_permutation_replicates.tsv"
+        perm_errors_file="$stage9_perm_dir/fst_permutation_error_summary.tsv"
         printf "Population1\tPopulation2\tPermutations.Requested\tFST.Unweight.Permutations.Valid\tFST.Unweight.Extreme\tFST.Unweight.Observed\tFST.Unweight.Pvalue.Raw\tFST.Weight.Permutations.Valid\tFST.Weight.Extreme\tFST.Weight.Observed\tFST.Weight.Pvalue.Raw\n" > "$perm_summary_file"
         printf "Population1\tPopulation2\tPermutation\tFST.Unweight\tFST.Weight\n" > "$perm_replicates_file"
+        printf "Population1\tPopulation2\tFailed.Step\tFailed.Replicates\tFirst.Permutation\tExample.Message\n" > "$perm_errors_file"
     fi
     STAGE9_LAST_RUN_DIR="$stage9_dir"
 
@@ -4219,7 +4232,9 @@ run_stage9_genetic_divergence() {
                 fi
 
                 perm_result_dir="$perm_pair_dir/replicate_results"
+                perm_error_dir="$perm_pair_dir/replicate_errors"
                 mkdir -p "$perm_result_dir"
+                mkdir -p "$perm_error_dir"
                 perm_actual_jobs="$S9_PERMUTATION_JOBS"
                 [ "$perm_actual_jobs" -gt "$S9_PERMUTATION_N" ] && perm_actual_jobs="$S9_PERMUTATION_N"
                 echo "[Stage 9 - Permutation] $p1 vs $p2：$S9_PERMUTATION_N 次；${perm_actual_jobs} workers；realSFS 每 worker ${S9_PERMUTATION_REALSFS_CORES} core；ANGSD -P 1"
@@ -4227,6 +4242,7 @@ run_stage9_genetic_divergence() {
                 S9_PERM_PAIR_COUNTER="$pair_counter"
                 S9_PERM_PAIR_DIR="$perm_pair_dir"
                 S9_PERM_RESULT_DIR="$perm_result_dir"
+                S9_PERM_ERROR_DIR="$perm_error_dir"
                 S9_PERM_COMBINED_BAMFILE="$perm_combined_bamfile"
                 S9_PERM_ALL_SITES="$stage9_dir/AllSites.sites"
                 S9_PERM_P1="$p1"
@@ -4249,13 +4265,33 @@ run_stage9_genetic_divergence() {
                 for perm_pid in "${perm_pids[@]}"; do
                     wait "$perm_pid" || perm_failed=1
                 done
+                for ((perm_i=1; perm_i<=S9_PERMUTATION_N; perm_i++)); do
+                    if [ ! -f "$perm_result_dir/perm_${perm_i}.tsv" ]; then
+                        printf "%s\t%s\t%s\tNA\tNA\n" "$p1" "$p2" "$perm_i" > "$perm_result_dir/perm_${perm_i}.tsv"
+                        printf "%s\t%s\t%s\t%s\t%s\n" "$p1" "$p2" "$perm_i" "worker_result_missing" "worker exited without a result file" > "$perm_error_dir/perm_${perm_i}.tsv"
+                    fi
+                done
                 if [ "$perm_failed" -ne 0 ]; then
-                    echo "錯誤：$p1 vs $p2 的 permutation 平行工作失敗；不會產生不完整的 p-value 結果。"
-                    return 1
+                    echo "警告：$p1 vs $p2 有 permutation worker 失敗；已記為無效 replicate，繼續後續分析。"
                 fi
-                if [ "$(find "$perm_result_dir" -maxdepth 1 -type f -name 'perm_*.tsv' | wc -l | tr -d '[:space:]')" -ne "$S9_PERMUTATION_N" ]; then
-                    echo "錯誤：$p1 vs $p2 的 permutation 結果不完整；不會產生不完整的 p-value 結果。"
-                    return 1
+
+                if find "$perm_error_dir" -maxdepth 1 -type f -name 'perm_*.tsv' -print -quit | grep -q .; then
+                    awk -F'\t' '
+                        {
+                            key=$1 FS $2 FS $4
+                            count[key]++
+                            if (!(key in first_perm)) {
+                                first_perm[key]=$3
+                                example[key]=$5
+                            }
+                        }
+                        END {
+                            for (key in count) {
+                                split(key, fields, FS)
+                                print fields[1] FS fields[2] FS fields[3] FS count[key] FS first_perm[key] FS example[key]
+                            }
+                        }
+                    ' "$perm_error_dir"/perm_*.tsv | sort -t $'\t' -k1,1 -k2,2 -k3,3 >> "$perm_errors_file"
                 fi
 
                 perm_valid_uw=0
@@ -4291,7 +4327,9 @@ run_stage9_genetic_divergence() {
                 printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" "$p1" "$p2" "$S9_PERMUTATION_N" "$perm_valid_uw" "$perm_extreme_uw" "$uw_val" "$perm_p_uw" "$perm_valid_wt" "$perm_extreme_wt" "$wt_val" "$perm_p_wt" >> "$perm_summary_file"
                 rm -f "$perm_combined_bamfile"
                 rm -f "$perm_result_dir"/perm_*.tsv
+                rm -f "$perm_error_dir"/perm_*.tsv
                 rmdir "$perm_result_dir" 2>/dev/null || true
+                rmdir "$perm_error_dir" 2>/dev/null || true
                 rmdir "$perm_pair_dir" 2>/dev/null || true
             fi
         done
@@ -4364,6 +4402,9 @@ run_stage9_genetic_divergence() {
         echo "Permutation seed: $S9_PERMUTATION_SEED"
         echo "Permutation workers: $S9_PERMUTATION_JOBS（預設上限為 THREADS / 2）"
         echo "Permutation realSFS cores（每 worker）: $S9_PERMUTATION_REALSFS_CORES"
+        perm_failed_replicates=$(awk -F'\t' 'NR>1 {sum += $4} END {print sum + 0}' "$perm_errors_file")
+        echo "Permutation 無效 replicate: $perm_failed_replicates"
+        echo "Permutation 錯誤摘要: $perm_errors_file"
     else
         echo "FST permutation: 已略過（可下次選 y 啟用）"
     fi

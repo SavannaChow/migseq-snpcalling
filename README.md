@@ -6,9 +6,9 @@ Credit: AllenChen's lab, Biodiversity Research Center, Academia Sinica
 
 ## 目前版本
 
-`RefMIG.sh v3.0.7`（2026-10-06）
+`RefMIG.sh v3.0.8`（2026-10-08）
 
-本版本保留完整 command plan 顯示與記錄：確認畫面、global command log、各 Stage command log 會保存完整 shell 指令與參數，不再使用省略符號；Stage 8 產生的 runstructure 內容也會完整記錄。Stage 9 的 2D-SFS/Fst 預設使用偵測到 threads 的一半，並新增不使用 hyper-threading 的 permutation worker pool；ANGSD 維持 `-P 1`，各 replicate 先獨立輸出後再排序合併計算顯著性。
+本版本保留完整 command plan 顯示與記錄：確認畫面、global command log、各 Stage command log 會保存完整 shell 指令與參數，不再使用省略符號；Stage 8 產生的 runstructure 內容也會完整記錄。Stage 9 的 2D-SFS/Fst 預設使用偵測到 threads 的一半，並新增不使用 hyper-threading 的 permutation worker pool；ANGSD 維持 `-P 1`，各 replicate 先獨立輸出後再排序合併計算顯著性。單一 permutation 失敗會記為 `NA` 並繼續其他 replicate 與 population pair；錯誤只保留精簡的 pair/步驟摘要，不會中止整個 Stage 9。
 
 RefMIG.sh 啟動時會從 GitHub `main` 分支檢查 `RefMIG.sh` 更新。發現新版本後可直接下載覆蓋，重新執行即可使用更新版本。
 
